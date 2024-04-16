@@ -143,27 +143,27 @@ impl Module {
 
 
 // Can most likely transform this...
-pub const kTR_Pass: u32 = 0;
-pub const kTR_Fail: u32 = 16;
-pub const kTR_FailModule: u32 = 32;
-pub const kTR_FailAll: u32 = 48;
+pub const K_TR_PASS: u32 = 0;
+pub const K_TR_FAIL: u32 = 16;
+pub const K_TR_FAIL_MODULE: u32 = 32;
+pub const K_TR_FAIL_ALL: u32 = 48;
 
-enum kResultCode {
-    kTR_Pass = 0,
-    kTR_Fail = 16,
-    kTR_FailModule = 32,
-    kTR_FailAll = 48,
+enum TestResult {
+    Pass = 0,
+    Fail = 16,
+    FailModule = 32,
+    FailAll = 48,
 }
 
 
-impl TryFrom<c_int> for kResultCode {
+impl TryFrom<c_int> for TestResult {
     type Error = ();
     fn try_from(v : c_int) -> Result<Self, Self::Error> {
         match v {
-            x if x == kResultCode::kTR_Pass as c_int => Ok(kResultCode::kTR_Pass),
-            x if x == kResultCode::kTR_Fail as c_int => Ok(kResultCode::kTR_Fail),
-            x if x == kResultCode::kTR_FailModule as c_int => Ok(kResultCode::kTR_FailModule),
-            x if x == kResultCode::kTR_FailAll as c_int => Ok(kResultCode::kTR_FailAll),
+            x if x == TestResult::Pass as c_int => Ok(TestResult::Pass),
+            x if x == TestResult::Fail as c_int => Ok(TestResult::Fail),
+            x if x == TestResult::FailModule as c_int => Ok(TestResult::FailModule),
+            x if x == TestResult::FailAll as c_int => Ok(TestResult::FailAll),
             _ => Err(())
         }
     }
@@ -176,43 +176,43 @@ pub type DependsHandler = extern "C" fn(name : *const c_char, dep_list: *const c
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct TestRunnerInterface {
-    pub Debug : Option<LogHandler>,
-    pub Info : Option<LogHandler>,
-    pub Warning : Option<LogHandler>,
-    pub Error: Option<LogHandler>,
-    pub Fatal : Option<LogHandler>,
-    pub Abort : Option<LogHandler>,
+    pub debug : Option<LogHandler>,
+    pub info : Option<LogHandler>,
+    pub warning : Option<LogHandler>,
+    pub error: Option<LogHandler>,
+    pub fatal : Option<LogHandler>,
+    pub abort : Option<LogHandler>,
 
-    pub AssertError : AssertErrorHandler,
+    pub assert_error : AssertErrorHandler,
 
-    pub SetPreCaseCallback : Option<CaseHandler>,
-    pub SetPostCaseCallback : Option<CaseHandler>,
+    pub set_pre_case_callback : Option<CaseHandler>,
+    pub set_post_case_callback : Option<CaseHandler>,
 
-    pub CaseDepends : Option<DependsHandler>,
+    pub case_depends : Option<DependsHandler>,
 }
 pub type TestableFunction = unsafe extern "C" fn(*mut TestRunnerInterface) -> c_int;
 
-unsafe extern "C" fn AssertErrorImpl(exp : *const c_char, file : *const c_char, line : c_int) {
+unsafe extern "C" fn assert_error_impl(exp : *const c_char, file : *const c_char, line : c_int) {
     println!("AssertError called");
 }
 
 impl TestRunnerInterface {
     pub fn new() -> TestRunnerInterface {
 //        let ptr_assert_error = AssertError as *const ();
-        let mut trun = TestRunnerInterface {
-            Debug: None,
-            Info: None,
-            Warning: None,
-            Error: None,
-            Fatal: None,
-            Abort: None,
+        let trun = TestRunnerInterface {
+            debug: None,
+            info: None,
+            warning: None,
+            error: None,
+            fatal: None,
+            abort: None,
 
-            AssertError: AssertErrorImpl,
+            assert_error: assert_error_impl,
 
-            SetPreCaseCallback : None,
-            SetPostCaseCallback : None,
+            set_pre_case_callback : None,
+            set_post_case_callback : None,
 
-            CaseDepends : None,
+            case_depends : None,
 
         };
         return trun;
