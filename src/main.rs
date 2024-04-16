@@ -1,206 +1,22 @@
-use sharedlib::{Lib, Func, Symbol};
+pub mod test_interface;
+pub mod dir_scanner;
+pub mod dyn_library;
+
+//use sharedlib::{Lib, Func, Symbol};
+use libloading;
 use std::process::Command;
 use std::{fs, io, env};
 use std::collections::HashMap;
 use std::path::Path;
-use std::ffi::{c_int, c_void,c_char, CStr};
+use std::ffi::{c_int, c_void,c_char, CStr, CString};
 use std::convert::TryFrom;
 use std::iter::Map;
 use std::ops::Deref;
 
+use crate::test_interface::{TestRunnerInterface, TestableFunction, TestResult};
+use crate::dir_scanner::*;
+use crate::dyn_library::*;
 
-// Can most likely transform this...
-pub const K_TR_PASS: u32 = 0;
-pub const K_TR_FAIL: u32 = 16;
-pub const K_TR_FAIL_MODULE: u32 = 32;
-pub const K_TR_FAIL_ALL: u32 = 48;
-
-enum TestResult {
-    Pass = 0,
-    Fail = 16,
-    FailModule = 32,
-    FailAll = 48,
-}
-
-
-impl TryFrom<c_int> for TestResult {
-    type Error = ();
-    fn try_from(v : c_int) -> Result<Self, Self::Error> {
-        match v {
-            x if x == TestResult::Pass as c_int => Ok(TestResult::Pass),
-            x if x == TestResult::Fail as c_int => Ok(TestResult::Fail),
-            x if x == TestResult::FailModule as c_int => Ok(TestResult::FailModule),
-            x if x == TestResult::FailAll as c_int => Ok(TestResult::FailAll),
-            _ => Err(())
-        }
-    }
-}
-
-pub type AssertErrorHandler = extern "C" fn(exp : *const c_char, file : *const c_char, line : c_int);
-pub type LogHandler =  extern "C" fn (line : c_int, file: *const c_char, format: *const c_char, ...) -> c_void;
-pub type CaseHandler = extern "C" fn(case: *mut TestRunnerInterface);
-pub type DependsHandler = extern "C" fn(name : *const c_char, dep_list: *const c_char);
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct TestRunnerInterface {
-    pub debug : Option<LogHandler>,
-    pub info : Option<LogHandler>,
-    pub warning : Option<LogHandler>,
-    pub error: Option<LogHandler>,
-    pub fatal : Option<LogHandler>,
-    pub abort : Option<LogHandler>,
-
-    pub assert_error : AssertErrorHandler,
-
-    pub set_pre_case_callback : Option<CaseHandler>,
-    pub set_post_case_callback : Option<CaseHandler>,
-
-    pub case_depends : Option<DependsHandler>,
-}
-pub type TestableFunction = unsafe extern "C" fn(*mut TestRunnerInterface) -> c_int;
-
-extern "C" fn assert_error_impl(exp : *const c_char, file : *const c_char, line : c_int) {
-
-    let str_exp = unsafe { CStr::from_ptr(exp).to_str().expect("assert error impl, exp error") };
-    let str_file = unsafe { CStr::from_ptr(file).to_str().expect("assert error impl, file error") };
-
-    // NOTE: This is normally printed with the logger
-    println!("Assert Error: {}:{}\t'{}'", str_file, line, str_exp);
-}
-
-// #[allow(non_snake_case)]
-
-impl TestRunnerInterface {
-    pub fn new() -> TestRunnerInterface {
-//        let ptr_assert_error = AssertError as *const ();
-        let trun = TestRunnerInterface {
-            debug: None,
-            info: None,
-            warning: None,
-            error: None,
-            fatal: None,
-            abort: None,
-
-            assert_error: assert_error_impl,
-
-            set_pre_case_callback : None,
-            set_post_case_callback : None,
-
-            case_depends : None,
-
-        };
-        return trun;
-    }
-}
-
-
-
-struct DirScanner {
-    libraries : Vec<String>,    
-}
-
-impl DirScanner {
-    pub fn new() -> DirScanner {
-        let dir_scanner = DirScanner {
-            libraries: Vec::new(),
-        };
-        return dir_scanner;
-    }
-
-    // Recursively scan and add potential files to list
-    pub fn scan(&mut self, dir: &Path) -> io::Result<()> {
-        if dir.is_dir() {
-            for entry in fs::read_dir(dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_dir() {
-                    self.scan(&path)?;
-                } else {                                        
-                    match entry.path().to_str() {
-                        None => {},
-                        Some(v) => self.check_and_add(v),
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn check_and_add(&mut self, filename : &str) {        
-        if !self.is_extension_ok(filename) {
-            return;
-        }
-
-        self.libraries.push(filename.to_string());
-    }
-
-    fn is_extension_ok(&mut self, filename : &str) -> bool {
-        // Might need to extend this one..
-        return filename.ends_with(".so")
-    }
-}
-
-#[derive(Debug)]
-struct DynLibrary {
-    name : String,
-    exports : Vec<String>,
-}
-
-impl DynLibrary {
-    pub fn new(dynlib_name : &str) -> DynLibrary {
-        let dynlib = DynLibrary {
-            name: dynlib_name.to_string(),
-            exports: Vec::new(),
-        };
-        return dynlib;            
-    }
-    
-    // I should probably not return 'bool' here...
-    pub fn scan(&mut self) -> bool {
-        let output = Command::new("nm")
-                        .arg(self.name.as_str())
-                        .output()
-                        .expect("failed to execute");
-
-        // No sure this will ever happen...
-        if !output.status.success() {
-            println!("Error while scanning library");
-            return false;
-        }
-        let str = String::from_utf8(output.stdout).expect("error");
-        // This can most likely be rewritten as a chain of map's and filters..
-        let lines = str.split("\n");
-
-        // transform each valid line containing a valid test function to our internal list of plausible exports
-        self.exports = lines
-            .filter(|s| s.split_whitespace().count() == 3)
-            .filter_map(|s| DynLibrary::is_valid_testfunc(s).ok())
-            .map(str::to_string)
-            .collect();
-
-        return true;
-    } // scan
-
-    fn is_valid_line(line : &str) -> Result<&str,()>{
-        if line.split_whitespace().count() != 3 {
-            return Err(());
-        }
-        Ok(line)
-    }
-
-    fn is_valid_testfunc(line : &str) -> Result<&str, ()> {
-
-        let parts : Vec<&str> = line.split_whitespace().collect();
-        if parts[1] != "T" {
-            return Err(())
-        }
-        if !parts[2].starts_with("test_") {
-            return Err(())
-        }
-        Ok(parts[2])
-    }
-
-}   // impl...
 
 
 // Testable function
@@ -230,20 +46,19 @@ impl TestFunction {
 
         let mut trun_interface = TestRunnerInterface::new();
 
+        println!("dynlib is='{}'", dynlib.name);
 
-        let lib = unsafe { Lib::new(&dynlib.name).expect("load lib") } ;
-        //let func_symbol: Func<extern "C" fn(*mut c_void) -> c_int> = lib.find_func("test_strutil_trim");
-        let func_symbol : Func<TestableFunction> = unsafe { lib.find_func(&self.export).expect("find_func") };
-        let func = unsafe { func_symbol.get() };
+        let func = dynlib.get_testable_function(&self.export);
+
         let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
         println!("=== RUN\t{}",self.export);
         let raw_result = unsafe { func(ptr_trun) };
-        let test_result = TestResult::try_from(raw_result).unwrap();
+        let test_result = TestResult::try_from(raw_result); //.unwrap();
         match test_result {
-            TestResult::Pass => println!("=== PASS:\t{}, 0.00 sec, 0",self.export),
-            TestResult::Fail => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
-            TestResult::FailModule => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
-            TestResult::FailAll => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
+            Ok(TestResult::Pass) => println!("=== PASS:\t{}, 0.00 sec, 0",self.export),
+            Ok(TestResult::Fail) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
+            Ok(TestResult::FailModule) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
+            Ok(TestResult::FailAll) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
             _ => println!("=== INVALID RETURN CODE ({}) for {}", raw_result,self.export),
         }
     }
@@ -306,22 +121,19 @@ impl Module<'_> {
         for d in dummy {
             println!("{}", d);
         }
-
-        // println!("Lib: {}",self.dynlib.name);
-        // for export in &self.dynlib.exports {
-        //     println!("  {}", export);
-        // } 
     }
 }
 
+// Just an experimental function to load and excute something from dylib
+// bulk of this is now in 'dynlib'
 fn call_func(module : &Module, fname : &str) {
         let mut trun_interface = TestRunnerInterface::new();
 
-
-        let lib = unsafe { Lib::new(&module.dynlib.name).expect("load lib") } ;
+        let lib = unsafe { libloading::Library::new(&module.dynlib.name).expect("load lib") } ;
         //let func_symbol: Func<extern "C" fn(*mut c_void) -> c_int> = lib.find_func("test_strutil_trim");
-        let func_symbol : Func<TestableFunction> = unsafe { lib.find_func(fname).expect("find_func") };
-        let func = unsafe { func_symbol.get() };
+
+        let str_export = CString::new(fname).unwrap();
+        let func : libloading::Symbol<TestableFunction> = unsafe { lib.get(str_export.as_bytes_with_nul()).expect("find_func") };
         let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
         println!("data");
         println!("  trun = {:#?}",ptr_trun);
@@ -366,11 +178,11 @@ fn main() {
     for lib in dir_scanner.libraries {
         println!("{}", lib);
 
-        let mut dynlib = DynLibrary::new(&lib);
-        if !dynlib.scan() {
-            println!("Scan failed on {}", lib);
-            break;
-        }
+        let dynlib = DynLibrary::new(&lib);
+        // if !dynlib.scan() {
+        //     println!("Scan failed on {}", lib);
+        //     break;
+        // }
         let modules = modules_from_dynlib(&dynlib);
         for (_, module) in modules.into_iter() {
             module.execute();
