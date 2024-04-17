@@ -11,8 +11,10 @@ use std::path::Path;
 use std::ffi::{c_int, c_void,c_char, CStr, CString};
 use std::convert::TryFrom;
 use std::iter::Map;
+use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::string::ToString;
+use std::sync::Once;
 use log::info;
 use clap::{Parser, Subcommand};
 
@@ -174,6 +176,15 @@ fn modules_from_dynlib(dyn_library: &DynLibrary) -> HashMap<&str, Module> {
 fn main() {    
     println!("Hello, world!");
 
+    let cfg = Config::instance();
+
+
+    // How to make this into a 'singleton'??
+    println!("{:#?}", cfg);
+    println!("{:#?}", cfg.modules);
+
+    return;
+
     let config = Config::parse();
     println!("{:#?}", config);
     println!("{:#?}", config.modules);
@@ -201,7 +212,45 @@ fn main() {
     }
 
 }
+/*
+struct Singleton {
+    some_value : u8,
+}
+impl Singleton {
+    fn instance() -> &'static Singleton {
+        static mut GLB_SINGLETON: MaybeUninit<Singleton> = MaybeUninit::uninit();
+        static ONCE: Once = Once::new();
+        unsafe {
+            ONCE.call_once(|| {
+                let singleton = Singleton {
+                    some_value: 8,
+                };
+                GLB_SINGLETON.write(singleton);
+            });
+            GLB_SINGLETON.assume_init_ref()
+        }
+    }
+}
 
+ */
+
+pub trait Singleton {
+    fn instance() -> &'static Self;
+}
+
+impl Singleton for Config {
+    fn instance() -> &'static Self {
+        static mut GLB_CONFIG_SINGLETON: MaybeUninit<Config> = MaybeUninit::uninit();
+        static ONCE: Once = Once::new();
+        unsafe {
+            ONCE.call_once(|| {
+                let singleton = Config::parse();
+                GLB_CONFIG_SINGLETON.write(singleton);
+            });
+            GLB_CONFIG_SINGLETON.assume_init_ref()
+        }
+    }
+}
 
 
 #[derive(clap::Parser, Debug)]
