@@ -7,7 +7,7 @@ use std::{env};
 use std::rc::Rc;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::ffi::{CString};
+use std::ffi::{c_char, CStr, CString};
 use std::convert::TryFrom;
 use std::mem::MaybeUninit;
 use std::string::ToString;
@@ -107,22 +107,13 @@ impl App {
         }
     }
 
-    fn execute_tests(&self) {
-        for (_, module) in &self.modules_to_test {
+    fn execute_tests(&mut self) {
+        for (_, module) in &mut self.modules_to_test {
             if !module.should_execute() {
                 continue;
             }
             println!(" Module: {}",module.name);
             module.execute();
-/*
-            for tc in &module.test_cases {
-                if !tc.should_execute() {
-                    continue;
-                }
-                tc.execute(&module.dynlib);
-            }
-*/
-
         }
     }
 
@@ -156,59 +147,7 @@ fn modules_from_dynlib(dyn_library: &Rc<DynLibrary>) -> HashMap<String, Module> 
 
 
 
-// FIXME: Move these to own 'module'
 
-// Testable function
-enum CaseType {
-    Main,
-    Exit,
-    ModuleMain,
-    ModuleExit,
-    Regular,
-}
-struct TestFunction {
-    name : String,
-    case_type: CaseType,
-    export : String,
-}
-
-impl TestFunction {
-    pub fn new(name :&str, case_type: CaseType, export : String) -> TestFunction {
-        let test_function = TestFunction {
-            name : name.to_string(),
-            case_type : case_type,
-            export : export.to_string(),
-        };
-        return test_function;
-    }
-    pub fn should_execute(&self) -> bool {
-        let cfg = Config::instance();
-        if cfg.testcases.contains(&"-".to_string()) || cfg.testcases.contains(&self.name) {
-            return true;
-        }
-        return false;
-    }
-    pub fn execute(&self, dynlib : &DynLibrary) {
-
-        let mut trun_interface = TestRunnerInterface::new();
-
-        //println!("dynlib is='{}'", dynlib.name);
-
-        let func = dynlib.get_testable_function(&self.export);
-
-        let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
-        println!("=== RUN \t{}",self.export);
-        let raw_result = unsafe { func(ptr_trun) };
-        let test_result = TestResult::try_from(raw_result); //.unwrap();
-        match test_result {
-            Ok(TestResult::Pass) => println!("=== PASS:\t{}, 0.00 sec, 0",self.export),
-            Ok(TestResult::Fail) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
-            Ok(TestResult::FailModule) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
-            Ok(TestResult::FailAll) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
-            _ => println!("=== INVALID RETURN CODE ({}) for {}", raw_result,self.export),
-        }
-    }
-}
 
 //
 // Move to own module/file
@@ -216,6 +155,7 @@ impl TestFunction {
 struct Module{
     name : String,
     dynlib : Rc<DynLibrary>,
+    main_func : Option<TestFunction>,
     test_cases : Vec<TestFunction>,
 }
 
@@ -225,6 +165,7 @@ impl Module {
         let module = Module {
             name : name.to_string(),
             dynlib : Rc::clone(dyn_library),
+            main_func : None,
             test_cases : Vec::new(),
         };
 
@@ -246,12 +187,13 @@ impl Module {
             // special handling for 'test_<module>' => CaseType::ModuleMain
             if (parts.len() == 2) && (parts[1] == self.name) {
                 // println!("  main, func={},  export={}", parts[1], e);
-                self.test_cases.push(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string()));
+                self.main_func = Some(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string()));
+                //self.test_cases.push(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string()));
             } else {
                 // join the case name together again...
                 let case_name = parts[2..].join("_");
                 // println!("  case, func={},  export={}", case_name, e);
-                self.test_cases.push(TestFunction::new(&case_name, CaseType::ModuleMain, e.to_string()));
+                self.test_cases.push(TestFunction::new(&case_name, CaseType::Regular, e.to_string()));
             }
         }
     }
@@ -264,8 +206,13 @@ impl Module {
         return false;
     }
 
-    pub fn execute(&self) {
-        // FIXME: Execute main first...
+    pub fn execute(&mut self) {
+        // Execute main first, this will setup dependencies
+        if let Some(main) = self.main_func.take() {
+            main.execute(&self.dynlib);
+        }
+        // FIXME: Execute dependencies
+
         for tc in &self.test_cases {
             if tc.should_execute() {
                 tc.execute(&self.dynlib)
@@ -279,6 +226,79 @@ impl Module {
 
         for d in dummy {
             println!("{}", d);
+        }
+    }
+}
+
+
+// Testable function
+enum CaseType {
+    Main,
+    Exit,
+    ModuleMain,
+    ModuleExit,
+    Regular,
+}
+struct TestFunction {
+    name : String,
+    case_type: CaseType,
+    export : String,
+    executed : bool,    // state?
+    dependencies : Vec<String>,
+}
+
+extern "C" fn dependency_handler(name : *const c_char, dep_list: *const c_char) {
+    let str_name = unsafe { CStr::from_ptr(name).to_str().expect("assert error impl, exp error") };
+    let str_deplist = unsafe { CStr::from_ptr(dep_list).to_str().expect("assert error impl, file error") };
+
+    println!("Deps handler; func={}, depends={}", str_name, str_deplist);
+}
+
+
+impl TestFunction {
+    pub fn new(name :&str, case_type: CaseType, export : String) -> TestFunction {
+        let test_function = TestFunction {
+            name : name.to_string(),
+            case_type : case_type,
+            export : export.to_string(),
+            executed : false,
+            dependencies : Vec::new(),
+        };
+        return test_function;
+    }
+    pub fn should_execute(&self) -> bool {
+        let cfg = Config::instance();
+        // already executed?
+        if self.executed {
+            return false;
+        }
+
+        // Are we part of execution chain?
+        if cfg.testcases.contains(&"-".to_string()) || cfg.testcases.contains(&self.name) {
+            return true;
+        }
+
+        return false;
+    }
+    pub fn execute(&self, dynlib : &DynLibrary) {
+
+        let mut trun_interface = TestRunnerInterface::new();
+        trun_interface.case_depends = Some(dependency_handler);
+
+        //println!("dynlib is='{}'", dynlib.name);
+
+        let func = dynlib.get_testable_function(&self.export);
+
+        let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
+        println!("=== RUN \t{}",self.export);
+        let raw_result = unsafe { func(ptr_trun) };
+        let test_result = TestResult::try_from(raw_result); //.unwrap();
+        match test_result {
+            Ok(TestResult::Pass) => println!("=== PASS:\t{}, 0.00 sec, 0",self.export),
+            Ok(TestResult::Fail) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
+            Ok(TestResult::FailModule) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
+            Ok(TestResult::FailAll) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
+            _ => println!("=== INVALID RETURN CODE ({}) for {}", raw_result,self.export),
         }
     }
 }
