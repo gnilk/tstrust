@@ -2,21 +2,17 @@ pub mod test_interface;
 pub mod dir_scanner;
 pub mod dyn_library;
 
-//use sharedlib::{Lib, Func, Symbol};
 use libloading;
-use std::process::Command;
-use std::{fs, io, env};
+use std::{env};
+use std::rc::Rc;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::ffi::{c_int, c_void,c_char, CStr, CString};
+use std::ffi::{CString};
 use std::convert::TryFrom;
-use std::iter::Map;
 use std::mem::MaybeUninit;
-use std::ops::Deref;
 use std::string::ToString;
-use std::sync::{Mutex, Once};
-use log::info;
-use clap::{Parser, Subcommand};
+use std::sync::{Once};
+use clap::{Parser};
 
 use crate::test_interface::{TestRunnerInterface, TestableFunction, TestResult};
 use crate::dir_scanner::*;
@@ -29,45 +25,25 @@ use crate::dyn_library::*;
 fn main() {
     let cfg = Config::instance();
 
-    // This is populated during the 'scan' sequence and used later...
-    // There might be more for the context of one 'execution' round - consider creating a Context object..
 
+    // Putting stuff in an 'app' instance - this 'solves' global variable problems..
+    // Tried having a 'context' but was constantly battling life-time handling - this made it much easier...
     let mut app = App::new();
     app.scan_libraries(&cfg.inputs);
-
-    // for input in &cfg.inputs {
-    //     execute_tests_for(&input);
-    // }
-
-/*
-    let cdir = env::current_dir().expect("wef");
-    let mut dir_scanner = DirScanner::new();
-    dir_scanner.scan(cdir.as_path()).expect("wef");
-    for lib in dir_scanner.libraries {
-        println!("{}", lib);
-
-        let dynlib = DynLibrary::new(&lib);
-        // if !dynlib.scan() {
-        //     println!("Scan failed on {}", lib);
-        //     break;
-        // }
-        let modules = modules_from_dynlib(&dynlib);
-        for (_, module) in modules.into_iter() {
-            //
-            if cfg.modules.contains(&("-").to_string()) || cfg.modules.contains(&module.name) {
-                module.execute();
-            }
-        }
+    if cfg.list_tests {
+        app.list_tests();
     }
-
- */
+    if cfg.execute_tests {
+        app.execute_tests();
+    }
 }
-struct App<'a> {
-    modules_to_test : HashMap<String, Module<'a>>,
-}
-impl App<'_> {
 
-    pub fn new<'a>() -> App<'a> {
+struct App {
+    modules_to_test : HashMap<String, Module>,
+}
+impl App {
+
+    pub fn new<'a>() -> App {
         let instance = App {
             modules_to_test : HashMap::new(),
         };
@@ -101,7 +77,7 @@ impl App<'_> {
         }
     }
     fn scan_library(&mut self, filename: &str) {
-        let library = DynLibrary::new(filename);
+        let library = Rc::new(DynLibrary::new(filename));
         let modules = modules_from_dynlib(&library);
         for (name, module) in modules.into_iter() {
             // I don't like the fact that this must be unsafe.. really need to consider putting this in a context object..
@@ -113,55 +89,51 @@ impl App<'_> {
         }
     }
 
-    fn list_tests(&self) {}
-
-
-    //
-// Executes tests for libraries and/or modules
-//
-    fn execute_tests_for(&self, input: &str) {
-        if input == "." {
-            let cdir = env::current_dir().unwrap();
-            self.execute_tests_in_directory(&cdir);
-        } else {
-            let path = Path::new(input);
-            match path {
-                x if x.is_dir() => self.execute_tests_in_directory(&x.to_path_buf()),
-                x if x.is_file() => self.execute_tests_in_lib(x.to_str().unwrap()),
-                _ => println!("ERR: Unsupported file type")
+    fn list_tests(&self) {
+        for (_, module) in &self.modules_to_test {
+            match module.should_execute() {
+                true => print!("*"),
+                false=> print!("-"),
+            }
+            println!(" Module: {}",module.name);
+            for tc in &module.test_cases {
+                print!("  "); // indent
+                match module.should_execute() && tc.should_execute() {
+                    true => print!("*"),
+                    false => print!("-"),
+                }
+                println!("  {}::{} ({})", module.name, tc.name, tc.export);
             }
         }
     }
 
-    fn execute_tests_in_directory(&self, dirname: &PathBuf) {
-        let mut dir_scanner = DirScanner::new();
-        dir_scanner.scan(dirname.as_path()).expect("wef");
-        for library in &dir_scanner.libraries {
-            self.execute_tests_in_lib(library)
-        }
-    }
-
-    fn execute_tests_in_lib(&self, filename: &str) {
-        let library = DynLibrary::new(filename);
-        let modules = modules_from_dynlib(&library);
-
-        let cfg = Config::instance();
-        for (_, module) in modules.into_iter() {
-            //
-            if cfg.modules.contains(&("-").to_string()) || cfg.modules.contains(&module.name) {
-                module.execute();
+    fn execute_tests(&self) {
+        for (_, module) in &self.modules_to_test {
+            if !module.should_execute() {
+                continue;
             }
+            println!(" Module: {}",module.name);
+            module.execute();
+/*
+            for tc in &module.test_cases {
+                if !tc.should_execute() {
+                    continue;
+                }
+                tc.execute(&module.dynlib);
+            }
+*/
+
         }
     }
 
-    //
-// Returns a hashmap of unique modules found in a shared library
-// a testable module is defined through 'test_<module>_<case>'
-//
+
 }
 
+//
+// helper
+//
 
-fn modules_from_dynlib(dyn_library: &DynLibrary) -> HashMap<String, Module> {
+fn modules_from_dynlib(dyn_library: &Rc<DynLibrary>) -> HashMap<String, Module> {
     let module_names: Vec<&str> = dyn_library.exports
         .iter()
         .map(|e| e.split('_').nth(1).unwrap())
@@ -209,6 +181,13 @@ impl TestFunction {
         };
         return test_function;
     }
+    pub fn should_execute(&self) -> bool {
+        let cfg = Config::instance();
+        if cfg.testcases.contains(&"-".to_string()) || cfg.testcases.contains(&self.name) {
+            return true;
+        }
+        return false;
+    }
     pub fn execute(&self, dynlib : &DynLibrary) {
 
         let mut trun_interface = TestRunnerInterface::new();
@@ -234,17 +213,18 @@ impl TestFunction {
 //
 // Move to own module/file
 //
-struct Module<'a> {
+struct Module{
     name : String,
-    dynlib : &'a DynLibrary,
+    dynlib : Rc<DynLibrary>,
     test_cases : Vec<TestFunction>,
 }
 
-impl Module<'_> {
-    pub fn new<'a>(name : &'a str, dyn_library: &'a DynLibrary) -> Module<'a> {
-        let mut module = Module {
+impl Module {
+    //pub fn new<'a>(name : &'a str, dyn_library: &'a DynLibrary) -> Module<'a> {
+    pub fn new(name : &str, dyn_library: &Rc<DynLibrary>) -> Module {
+        let module = Module {
             name : name.to_string(),
-            dynlib : dyn_library,
+            dynlib : Rc::clone(dyn_library),
             test_cases : Vec::new(),
         };
 
@@ -276,11 +256,20 @@ impl Module<'_> {
         }
     }
 
+    pub fn should_execute(&self) -> bool {
+        let cfg = Config::instance();
+        if cfg.modules.contains(&"-".to_string()) || cfg.modules.contains(&self.name) {
+            return true;
+        }
+        return false;
+    }
+
     pub fn execute(&self) {
         // FIXME: Execute main first...
-
         for tc in &self.test_cases {
-            tc.execute(self.dynlib)
+            if tc.should_execute() {
+                tc.execute(&self.dynlib)
+            }
         }
     }
 
@@ -298,6 +287,7 @@ impl Module<'_> {
 //
 // Just an experimental function to load and excute something from dylib
 // bulk of this is now in 'dynlib'
+/*
 fn call_func(module : &Module, fname : &str) {
         let mut trun_interface = TestRunnerInterface::new();
 
@@ -315,44 +305,13 @@ fn call_func(module : &Module, fname : &str) {
 
         println!("res={res}");
         println!("done!");
-
 }
 
-struct Context<'a> {
-    modules_to_test : Mutex<HashMap<String, Module<'a>>>,
-}
+ */
+
+
 pub trait Singleton {
     fn instance() -> &'static Self;
-}
-
-impl Context<'_> {
-    fn instance() -> &'static Self {
-        static mut GLB_CONTEXT_SINGLETON: MaybeUninit<Context<'_>> = MaybeUninit::uninit();
-        static ONCE: Once = Once::new();
-        unsafe {
-            ONCE.call_once(|| {
-                let context = Context {
-                    modules_to_test: Mutex::new(HashMap::new()),
-                };
-                GLB_CONTEXT_SINGLETON.write(context);
-            });
-            GLB_CONTEXT_SINGLETON.assume_init_ref()
-        }
-    }
-
-    fn merge_modules(&self, modules : HashMap<String, Module>) {
-        let cfg = Config::instance();
-        for (name, module) in modules.into_iter() {
-            // I don't like the fact that this must be unsafe.. really need to consider putting this in a context object..
-
-            let mut data = self.modules_to_test.lock().unwrap();
-            if !data.contains_key(&name) {
-                // Don't want clone here...
-                data.insert(name, module);
-            }
-        }
-
-    }
 }
 
 impl Singleton for Config {

@@ -1,6 +1,6 @@
 use std::ffi::CString;
 use std::process::Command;
-use libloading::{Library, Symbol};
+use libloading::{Symbol};
 use crate::test_interface::TestableFunction;
 
 #[derive(Debug)]
@@ -15,13 +15,10 @@ impl DynLibrary {
     pub fn new(dynlib_name : &str) -> DynLibrary {
 
         let exports = Self::prescan(dynlib_name);
+        let name = dynlib_name.to_string();
+        let library =  Self::cache_library(dynlib_name);
 
-        let dynlib = DynLibrary {
-            name: dynlib_name.to_string(),
-            exports: exports,
-            library: Self::cache_library(dynlib_name),
-        };
-        return dynlib;
+        return Self {name, exports, library};
     }
 
     pub fn get_testable_function(&self, symbol : &str) -> Symbol<TestableFunction> {
