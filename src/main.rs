@@ -7,7 +7,7 @@ use libloading;
 use std::process::Command;
 use std::{fs, io, env};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ffi::{c_int, c_void,c_char, CStr, CString};
 use std::convert::TryFrom;
 use std::iter::Map;
@@ -23,6 +23,106 @@ use crate::dir_scanner::*;
 use crate::dyn_library::*;
 
 
+//
+// well - main...
+//
+fn main() {
+    let cfg = Config::instance();
+
+    for input in &cfg.inputs {
+        execute_tests_for(&input);
+    }
+
+/*
+    let cdir = env::current_dir().expect("wef");
+    let mut dir_scanner = DirScanner::new();
+    dir_scanner.scan(cdir.as_path()).expect("wef");
+    for lib in dir_scanner.libraries {
+        println!("{}", lib);
+
+        let dynlib = DynLibrary::new(&lib);
+        // if !dynlib.scan() {
+        //     println!("Scan failed on {}", lib);
+        //     break;
+        // }
+        let modules = modules_from_dynlib(&dynlib);
+        for (_, module) in modules.into_iter() {
+            //
+            if cfg.modules.contains(&("-").to_string()) || cfg.modules.contains(&module.name) {
+                module.execute();
+            }
+        }
+    }
+
+ */
+}
+
+//
+// Executes tests for libraries and/or modules
+//
+fn execute_tests_for(input : &str) {
+    if input == "." {
+        let cdir = env::current_dir().unwrap();
+        execute_tests_in_directory(&cdir);
+    } else {
+        let path = Path::new(input);
+        match path {
+             x if x.is_dir() => execute_tests_in_directory(&x.to_path_buf()),
+            x if x.is_file() => execute_tests_in_lib(x.to_str().unwrap()),
+            _ => println!("ERR: Unsupported file type")
+        }
+    }
+}
+
+fn execute_tests_in_directory(dirname : &PathBuf) {
+    let mut dir_scanner = DirScanner::new();
+    dir_scanner.scan(dirname.as_path()).expect("wef");
+    for library in &dir_scanner.libraries {
+        execute_tests_in_lib(library)
+    }
+}
+
+fn execute_tests_in_lib(filename : &str) {
+    let library = DynLibrary::new(filename);
+    let modules = modules_from_dynlib(&library);
+
+    let cfg = Config::instance();
+    for (_, module) in modules.into_iter() {
+        //
+        if cfg.modules.contains(&("-").to_string()) || cfg.modules.contains(&module.name) {
+            module.execute();
+        }
+    }
+}
+
+//
+// Returns a hashmap of unique modules found in a shared library
+// a testable module is defined through 'test_<module>_<case>'
+//
+fn modules_from_dynlib(dyn_library: &DynLibrary) -> HashMap<&str, Module> {
+    let module_names:Vec<&str> = dyn_library.exports
+        .iter()
+        .map(|e| e.split('_').nth(1).unwrap())
+        .collect();
+
+    let mut module_map:HashMap<&str, Module> = HashMap::new();
+
+    // I've struggled to turn this into a filter/map chain..  didn't get it to work...
+    for m in module_names {
+        if module_map.contains_key(m) {
+            continue;
+        }
+        let mut module = Module::new(m, dyn_library);
+        module.find_test_cases();
+        module_map.insert(m, module);
+    }
+
+    return module_map;
+}
+
+
+
+// FIXME: Move these to own 'module'
 
 // Testable function
 enum CaseType {
@@ -51,12 +151,12 @@ impl TestFunction {
 
         let mut trun_interface = TestRunnerInterface::new();
 
-        println!("dynlib is='{}'", dynlib.name);
+        //println!("dynlib is='{}'", dynlib.name);
 
         let func = dynlib.get_testable_function(&self.export);
 
         let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
-        println!("=== RUN\t{}",self.export);
+        println!("=== RUN \t{}",self.export);
         let raw_result = unsafe { func(ptr_trun) };
         let test_result = TestResult::try_from(raw_result); //.unwrap();
         match test_result {
@@ -69,6 +169,9 @@ impl TestFunction {
     }
 }
 
+//
+// Move to own module/file
+//
 struct Module<'a> {
     name : String,
     dynlib : &'a DynLibrary,
@@ -87,7 +190,7 @@ impl Module<'_> {
     }
 
     pub fn find_test_cases(&mut self) {
-        println!("parsing testcase, module={}", self.name);
+        // println!("parsing testcase, module={}", self.name);
         for e in &self.dynlib.exports {
             let parts:Vec<&str> = e.split('_').collect();
             if parts.len() < 2 {
@@ -100,12 +203,12 @@ impl Module<'_> {
 
             // special handling for 'test_<module>' => CaseType::ModuleMain
             if (parts.len() == 2) && (parts[1] == self.name) {
-                println!("  main, func={},  export={}", parts[1], e);
+                // println!("  main, func={},  export={}", parts[1], e);
                 self.test_cases.push(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string()));
             } else {
                 // join the case name together again...
                 let case_name = parts[2..].join("_");
-                println!("  case, func={},  export={}", case_name, e);
+                // println!("  case, func={},  export={}", case_name, e);
                 self.test_cases.push(TestFunction::new(&case_name, CaseType::ModuleMain, e.to_string()));
             }
         }
@@ -129,6 +232,8 @@ impl Module<'_> {
     }
 }
 
+
+//
 // Just an experimental function to load and excute something from dylib
 // bulk of this is now in 'dynlib'
 fn call_func(module : &Module, fname : &str) {
@@ -151,88 +256,8 @@ fn call_func(module : &Module, fname : &str) {
 
 }
 
-fn modules_from_dynlib(dyn_library: &DynLibrary) -> HashMap<&str, Module> {
-    let module_names:Vec<&str> = dyn_library.exports
-        .iter()
-        .map(|e| e.split('_').nth(1).unwrap())
-        .collect();
-
-    let mut module_map:HashMap<&str, Module> = HashMap::new();
-
-    // I've struggled to turn this into a filter/map chain..  didn't get it to work...
-    for m in module_names {
-        if module_map.contains_key(m) {
-            continue;
-        }
-        let mut module = Module::new(m, dyn_library);
-        module.find_test_cases();
-        module_map.insert(m, module);
-    }
-
-    return module_map;
-}
 
 
-fn main() {    
-    println!("Hello, world!");
-
-    let cfg = Config::instance();
-
-
-    // How to make this into a 'singleton'??
-    println!("{:#?}", cfg);
-    println!("{:#?}", cfg.modules);
-
-    return;
-
-    let config = Config::parse();
-    println!("{:#?}", config);
-    println!("{:#?}", config.modules);
-
-
-    let cdir = env::current_dir().expect("wef");
-    let mut dir_scanner = DirScanner::new();
-    dir_scanner.scan(cdir.as_path()).expect("wef");
-    for lib in dir_scanner.libraries {
-        println!("{}", lib);
-
-        let dynlib = DynLibrary::new(&lib);
-        // if !dynlib.scan() {
-        //     println!("Scan failed on {}", lib);
-        //     break;
-        // }
-        let modules = modules_from_dynlib(&dynlib);
-        for (_, module) in modules.into_iter() {
-            module.execute();
-        }
-
-        // let module = Module::new(&lib);
-        // module.dump();
-        // call_func(&module, "test_rust_dummy");
-    }
-
-}
-/*
-struct Singleton {
-    some_value : u8,
-}
-impl Singleton {
-    fn instance() -> &'static Singleton {
-        static mut GLB_SINGLETON: MaybeUninit<Singleton> = MaybeUninit::uninit();
-        static ONCE: Once = Once::new();
-        unsafe {
-            ONCE.call_once(|| {
-                let singleton = Singleton {
-                    some_value: 8,
-                };
-                GLB_SINGLETON.write(singleton);
-            });
-            GLB_SINGLETON.assume_init_ref()
-        }
-    }
-}
-
- */
 
 pub trait Singleton {
     fn instance() -> &'static Self;
