@@ -203,7 +203,7 @@ fn main() {
 }
 
 
-// This is a straight copy from the C version
+
 #[derive(clap::Parser, Debug)]
 #[command(name = "tstrust")]
 #[command(version = "0.0.1")]
