@@ -4,14 +4,18 @@ pub mod dyn_library;
 
 use libloading;
 use std::{env};
+use std::cell::{Ref, RefCell};
+
 use std::rc::Rc;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::ffi::{c_char, CStr, CString};
 use std::convert::TryFrom;
 use std::mem::MaybeUninit;
+use std::ops::DerefMut;
+use std::ptr::null;
 use std::string::ToString;
-use std::sync::{Once};
+use std::sync::{Once, Mutex, Arc};
 use clap::{Parser};
 
 use crate::test_interface::{TestRunnerInterface, TestableFunction, TestResult};
@@ -38,8 +42,20 @@ fn main() {
     }
 }
 
+
+#[derive(Debug)]
+struct Module {
+    name : String,
+    dynlib : Rc<DynLibrary>,
+    main_func : Option<TestFunctionRef>,
+    test_cases : Vec<TestFunctionRef>,
+}
+
+//pub type ModuleRef = Rc<RefCell<<Module>>;
+pub type ModuleRef = Rc<RefCell<Module>>;
+
 struct App {
-    modules_to_test : HashMap<String, Module>,
+    modules_to_test : HashMap<String, ModuleRef>,
 }
 impl App {
 
@@ -91,29 +107,38 @@ impl App {
 
     fn list_tests(&self) {
         for (_, module) in &self.modules_to_test {
-            match module.should_execute() {
+            match module.borrow().should_execute() {
                 true => print!("*"),
                 false=> print!("-"),
             }
-            println!(" Module: {}",module.name);
-            for tc in &module.test_cases {
+            println!(" Module: {}",module.borrow().name);
+            for tc in &module.borrow().test_cases {
                 print!("  "); // indent
-                match module.should_execute() && tc.should_execute() {
+                match module.borrow().should_execute() && tc.borrow().should_execute() {
                     true => print!("*"),
                     false => print!("-"),
                 }
-                println!("  {}::{} ({})", module.name, tc.name, tc.export);
+                println!("  {}::{} ({})", module.borrow().name, tc.borrow().name, tc.borrow().export);
             }
         }
     }
 
     fn execute_tests(&mut self) {
-        for (_, module) in &mut self.modules_to_test {
-            if !module.should_execute() {
+        for (_, module) in &self.modules_to_test {
+            if !module.borrow().should_execute() {
                 continue;
             }
-            println!(" Module: {}",module.name);
-            module.execute();
+            println!(" Module: {}",module.borrow().name);
+
+            if module.try_borrow_mut().is_err() {
+                println!("module::execute, borrow active");
+            }
+            CURRENT_TEST_MODULE.set(Some(module.clone()));
+            if module.try_borrow_mut().is_err() {
+                println!("module::execute, borrow active");
+            }
+
+            module.borrow().execute();
         }
     }
 
@@ -124,27 +149,54 @@ impl App {
 // helper
 //
 
-fn modules_from_dynlib(dyn_library: &Rc<DynLibrary>) -> HashMap<String, Module> {
+fn modules_from_dynlib(dyn_library: &Rc<DynLibrary>) -> HashMap<String, ModuleRef> {
     let module_names: Vec<&str> = dyn_library.exports
         .iter()
         .map(|e| e.split('_').nth(1).unwrap())
         .collect();
 
-    let mut module_map: HashMap<String, Module> = HashMap::new();
+    let mut module_map: HashMap<String, ModuleRef> = HashMap::new();
 
     // I've struggled to turn this into a filter/map chain..  didn't get it to work...
     for m in module_names {
         if module_map.contains_key(m) {
             continue;
         }
-        let mut module = Module::new(m, dyn_library);
-        module.find_test_cases();
-        module_map.insert(m.to_string(), module);
+        let module = Rc::new(RefCell::new(Module::new(m, dyn_library)));
+        module.borrow_mut().find_test_cases(module.clone());
+        module_map.insert(m.to_string(), module.clone());
     }
 
     return module_map;
 }
 
+fn testcases_for_module(dynlib: &DynLibrary, module : &mut ModuleRef) {
+    // println!("parsing testcase, module={}", self.name);
+    for e in &dynlib.exports {
+        let parts:Vec<&str> = e.split('_').collect();
+        if parts.len() < 2 {
+            panic!("Invalid export={} in dynlib={}",e,dynlib.name);
+        }
+        // Skip everything not belonging to us..
+        if parts[1] != module.borrow().name {
+            continue;
+        }
+        //Rc::get_mut(&mut module).unwrap().main_func = None;
+
+        // special handling for 'test_<module>' => CaseType::ModuleMain
+        if (parts.len() == 2) && (parts[1] == module.borrow().name) {
+            // println!("  main, func={},  export={}", parts[1], e);
+            //module.borrow_mut().main_func = Some(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string(), module));
+            //self.test_cases.push(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string()));
+        } else {
+            // join the case name together again...
+            let case_name = parts[2..].join("_");
+            // println!("  case, func={},  export={}", case_name, e);
+            //module.borrow_mut().test_cases.push(TestFunction::new(&case_name, CaseType::Regular, e.to_string(), module));
+        }
+    }
+
+}
 
 
 
@@ -152,12 +204,6 @@ fn modules_from_dynlib(dyn_library: &Rc<DynLibrary>) -> HashMap<String, Module> 
 //
 // Move to own module/file
 //
-struct Module{
-    name : String,
-    dynlib : Rc<DynLibrary>,
-    main_func : Option<TestFunction>,
-    test_cases : Vec<TestFunction>,
-}
 
 impl Module {
     //pub fn new<'a>(name : &'a str, dyn_library: &'a DynLibrary) -> Module<'a> {
@@ -172,7 +218,7 @@ impl Module {
         return module;
     }
 
-    pub fn find_test_cases(&mut self) {
+    pub fn find_test_cases(&mut self, module : ModuleRef) {
         // println!("parsing testcase, module={}", self.name);
         for e in &self.dynlib.exports {
             let parts:Vec<&str> = e.split('_').collect();
@@ -187,16 +233,17 @@ impl Module {
             // special handling for 'test_<module>' => CaseType::ModuleMain
             if (parts.len() == 2) && (parts[1] == self.name) {
                 // println!("  main, func={},  export={}", parts[1], e);
-                self.main_func = Some(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string()));
+                self.main_func = Some(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string(), module.clone()));
                 //self.test_cases.push(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string()));
             } else {
                 // join the case name together again...
                 let case_name = parts[2..].join("_");
                 // println!("  case, func={},  export={}", case_name, e);
-                self.test_cases.push(TestFunction::new(&case_name, CaseType::Regular, e.to_string()));
+                self.test_cases.push(TestFunction::new(&case_name, CaseType::Regular, e.to_string(), module.clone()));
             }
         }
     }
+
 
     pub fn should_execute(&self) -> bool {
         let cfg = Config::instance();
@@ -206,16 +253,22 @@ impl Module {
         return false;
     }
 
-    pub fn execute(&mut self) {
+    pub fn execute(&self) {
         // Execute main first, this will setup dependencies
-        if let Some(main) = self.main_func.take() {
-            main.execute(&self.dynlib);
+
+        if self.main_func.is_some() {
+            println!("Execute main!");
+
+            let func = self.main_func.as_ref().unwrap();
+
+            func.borrow().execute(&self.dynlib);
         }
         // FIXME: Execute dependencies
 
+        println!("Execute test cases!");
         for tc in &self.test_cases {
-            if tc.should_execute() {
-                tc.execute(&self.dynlib)
+            if tc.borrow().should_execute() {
+                tc.borrow().execute(&self.dynlib)
             }
         }
     }
@@ -232,6 +285,7 @@ impl Module {
 
 
 // Testable function
+#[derive(Debug)]
 enum CaseType {
     Main,
     Exit,
@@ -239,32 +293,73 @@ enum CaseType {
     ModuleExit,
     Regular,
 }
+#[derive(Debug)]
 struct TestFunction {
     name : String,
+//    module : ModuleRef,
     case_type: CaseType,
     export : String,
     executed : bool,    // state?
     dependencies : Vec<String>,
 }
 
+pub type TestFunctionRef = Rc<RefCell<TestFunction>>;
+
+
+thread_local! {
+    //pub type ModuleRef = Rc<RefCell<Module>>;
+    // so this final type would be:  RefCell<Option<Rc<RefCell<Module
+    pub static CURRENT_TEST_MODULE: RefCell<Option<ModuleRef>> = RefCell::new(None);
+    //pub static CURRENT_TEST_MODULE: *mut ModuleRef = null();
+}
+fn dep_handler(glb_opt : &Option<ModuleRef>, str_name : &str, str_deplist : &str) {
+    let glb_module_ref = glb_opt.as_ref().unwrap();
+
+    println!("Deps handler; func={}, depends={}", str_name, str_deplist);
+
+    if glb_module_ref.try_borrow_mut().is_err() {
+        println!("Borrow active!");
+    }
+
+    // I can't get this one to be a mutable object!!!
+    let glb_module = glb_module_ref.borrow();
+
+
+    println!("  Module => {}", glb_module.name);
+
+}
 extern "C" fn dependency_handler(name : *const c_char, dep_list: *const c_char) {
+    // This needs access to a global variable!!
+
     let str_name = unsafe { CStr::from_ptr(name).to_str().expect("assert error impl, exp error") };
     let str_deplist = unsafe { CStr::from_ptr(dep_list).to_str().expect("assert error impl, file error") };
 
-    println!("Deps handler; func={}, depends={}", str_name, str_deplist);
+    //CURRENT_TEST_MODULE.with_borrow(|crt| dep_handler(crt, str_name, str_deplist));
+    let mod_ref = CURRENT_TEST_MODULE.take().unwrap();
+    {
+        // Can't take this as 'mut' for some reason - I don't quite understand why...
+        let module = mod_ref.borrow();
+        println!("wef => {}", module.name);
+    }
+    // Set it again - needed??
+    CURRENT_TEST_MODULE.set(Some(mod_ref));
+
+
+
 }
 
 
 impl TestFunction {
-    pub fn new(name :&str, case_type: CaseType, export : String) -> TestFunction {
+    pub fn new(name :&str, case_type: CaseType, export : String, module : ModuleRef) -> TestFunctionRef {
         let test_function = TestFunction {
             name : name.to_string(),
+            //module : module,
             case_type : case_type,
             export : export.to_string(),
             executed : false,
             dependencies : Vec::new(),
         };
-        return test_function;
+        return Rc::new(RefCell::new(test_function));
     }
     pub fn should_execute(&self) -> bool {
         let cfg = Config::instance();
@@ -282,10 +377,15 @@ impl TestFunction {
     }
     pub fn execute(&self, dynlib : &DynLibrary) {
 
+
         let mut trun_interface = TestRunnerInterface::new();
         trun_interface.case_depends = Some(dependency_handler);
 
+        //current_test_module.set("wef");
+
         //println!("dynlib is='{}'", dynlib.name);
+
+        //CURRENT_TEST_MODULE = Some(self.module.clone());
 
         let func = dynlib.get_testable_function(&self.export);
 
@@ -332,6 +432,32 @@ fn call_func(module : &Module, fname : &str) {
 
 pub trait Singleton {
     fn instance() -> &'static Self;
+}
+
+struct CurrentRunningTestCase {
+    test_function: Option<Rc<TestFunction>>,
+}
+
+impl Singleton for CurrentRunningTestCase {
+    fn instance() -> &'static Self {
+        static mut GLB_CRT_SINGLETON: MaybeUninit<CurrentRunningTestCase> = MaybeUninit::uninit();
+        static ONCE: Once = Once::new();
+        unsafe {
+            ONCE.call_once(|| {
+                let singleton = CurrentRunningTestCase {
+                    test_function : None,
+                };
+                GLB_CRT_SINGLETON.write(singleton);
+            });
+            GLB_CRT_SINGLETON.assume_init_ref()
+        }
+    }
+}
+impl CurrentRunningTestCase {
+    fn set_current_test(&mut self, test_function: &Rc<TestFunction>) {
+        self.test_function = Some(Rc::clone(test_function));
+    }
+
 }
 
 impl Singleton for Config {
