@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::ffi::{c_char, CStr, CString};
 use std::convert::TryFrom;
 use std::mem::MaybeUninit;
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 use std::ptr::null;
 use std::string::ToString;
 use std::sync::{Once, Mutex, Arc};
@@ -46,7 +46,7 @@ fn main() {
 #[derive(Debug)]
 struct Module {
     name : String,
-    dynlib : Rc<DynLibrary>,
+    dynlib : DynLibraryRef,
     main_func : Option<TestFunctionRef>,
     test_cases : Vec<TestFunctionRef>,
 }
@@ -149,8 +149,9 @@ impl App {
 // helper
 //
 
-fn modules_from_dynlib(dyn_library: &Rc<DynLibrary>) -> HashMap<String, ModuleRef> {
-    let module_names: Vec<&str> = dyn_library.exports
+fn modules_from_dynlib(dynlibref: &DynLibraryRef) -> HashMap<String, ModuleRef> {
+    let dynlib = dynlibref.borrow();
+    let module_names: Vec<&str> = dynlib.exports
         .iter()
         .map(|e| e.split('_').nth(1).unwrap())
         .collect();
@@ -162,7 +163,7 @@ fn modules_from_dynlib(dyn_library: &Rc<DynLibrary>) -> HashMap<String, ModuleRe
         if module_map.contains_key(m) {
             continue;
         }
-        let module = Rc::new(RefCell::new(Module::new(m, dyn_library)));
+        let module = Rc::new(RefCell::new(Module::new(m, dynlibref)));
         module.borrow_mut().find_test_cases(module.clone());
         module_map.insert(m.to_string(), module.clone());
     }
@@ -207,10 +208,10 @@ fn testcases_for_module(dynlib: &DynLibrary, module : &mut ModuleRef) {
 
 impl Module {
     //pub fn new<'a>(name : &'a str, dyn_library: &'a DynLibrary) -> Module<'a> {
-    pub fn new(name : &str, dyn_library: &Rc<DynLibrary>) -> Module {
+    pub fn new(name : &str, dyn_library: &DynLibraryRef) -> Module {
         let module = Module {
             name : name.to_string(),
-            dynlib : Rc::clone(dyn_library),
+            dynlib : dyn_library.clone(),
             main_func : None,
             test_cases : Vec::new(),
         };
@@ -220,10 +221,10 @@ impl Module {
 
     pub fn find_test_cases(&mut self, module : ModuleRef) {
         // println!("parsing testcase, module={}", self.name);
-        for e in &self.dynlib.exports {
+        for e in &self.dynlib.borrow().exports {
             let parts:Vec<&str> = e.split('_').collect();
             if parts.len() < 2 {
-                panic!("Invalid export={} in dynlib={}",e,self.dynlib.name);
+                panic!("Invalid export={} in dynlib={}",e,self.dynlib.borrow().name);
             }
             // Skip everything not belonging to us..
             if parts[1] != self.name {
@@ -275,7 +276,8 @@ impl Module {
 
     pub fn dump(&self) {
         // Smarter way to filter??
-        let dummy : Vec<&String> = self.dynlib.exports.iter().filter(|x| x.contains("casefilter")).collect();
+        let lib = self.dynlib.borrow();
+        let dummy : Vec<&String> = lib.exports.iter().filter(|x| x.contains("casefilter")).collect();
 
         for d in dummy {
             println!("{}", d);
@@ -334,6 +336,8 @@ extern "C" fn dependency_handler(name : *const c_char, dep_list: *const c_char) 
     let str_name = unsafe { CStr::from_ptr(name).to_str().expect("assert error impl, exp error") };
     let str_deplist = unsafe { CStr::from_ptr(dep_list).to_str().expect("assert error impl, file error") };
 
+    CURRENT_TEST_MODULE.with(|state|dep_handler(state.borrow().deref(), str_name, str_deplist));
+/*
     //CURRENT_TEST_MODULE.with_borrow(|crt| dep_handler(crt, str_name, str_deplist));
     let mod_ref = CURRENT_TEST_MODULE.take().unwrap();
     {
@@ -343,6 +347,8 @@ extern "C" fn dependency_handler(name : *const c_char, dep_list: *const c_char) 
     }
     // Set it again - needed??
     CURRENT_TEST_MODULE.set(Some(mod_ref));
+
+ */
 
 
 
@@ -375,7 +381,7 @@ impl TestFunction {
 
         return false;
     }
-    pub fn execute(&self, dynlib : &DynLibrary) {
+    pub fn execute(&self, dynlib : &DynLibraryRef) {
 
 
         let mut trun_interface = TestRunnerInterface::new();
@@ -387,7 +393,8 @@ impl TestFunction {
 
         //CURRENT_TEST_MODULE = Some(self.module.clone());
 
-        let func = dynlib.get_testable_function(&self.export);
+        let lib = dynlib.borrow();
+        let func = lib.get_testable_function(&self.export);
 
         let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
         println!("=== RUN \t{}",self.export);
