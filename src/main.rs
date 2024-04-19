@@ -129,15 +129,6 @@ impl App {
                 continue;
             }
             println!(" Module: {}",module.borrow().name);
-
-            if module.try_borrow_mut().is_err() {
-                println!("module::execute, borrow active");
-            }
-            CURRENT_TEST_MODULE.set(Some(module.clone()));
-            if module.try_borrow_mut().is_err() {
-                println!("module::execute, borrow active");
-            }
-
             module.borrow().execute();
         }
     }
@@ -257,13 +248,7 @@ impl Module {
     pub fn execute(&self) {
         // Execute main first, this will setup dependencies
 
-        if self.main_func.is_some() {
-            println!("Execute main!");
-
-            let func = self.main_func.as_ref().unwrap();
-
-            func.borrow().execute(&self.dynlib);
-        }
+        self.execute_main();
         // FIXME: Execute dependencies
 
         println!("Execute test cases!");
@@ -272,6 +257,23 @@ impl Module {
                 tc.borrow().execute(&self.dynlib)
             }
         }
+    }
+
+    fn execute_main(&self) {
+        if !self.main_func.is_some() {
+            return;
+        }
+
+        println!("Execute main!");
+        let func = self.main_func.as_ref().unwrap();
+        func.borrow().execute(&self.dynlib);
+        let ctx = CONTEXT.take();
+        if ctx.dependencies.is_empty() {
+            println!("No dependencies");
+            return;
+        }
+        println!("Dependencies");
+        ctx.dump();
     }
 
     pub fn dump(&self) {
@@ -308,11 +310,56 @@ struct TestFunction {
 pub type TestFunctionRef = Rc<RefCell<TestFunction>>;
 
 
+struct Context {
+    dependencies : Vec<CaseDependency>,
+}
+struct CaseDependency {
+    case : String,
+    dependencies : Vec<String>,
+}
+
+impl Default for Context {
+    fn default() -> Self {
+        Self {
+            dependencies : Vec::new(),
+        }
+    }
+}
+impl Context {
+    pub fn new() -> Context {
+        Self {
+            dependencies : Vec::new(),
+        }
+    }
+    pub fn add_dependency(&mut self, case: &str, deplist: &str) {
+        let parts: Vec<_> = deplist.split(",").collect();
+        let mut case_dep = CaseDependency {
+            case : case.to_string(),
+            dependencies : Vec::new(),
+        };
+
+        for p in &parts {
+
+            case_dep.dependencies.push(p.trim().to_string());
+        }
+        self.dependencies.push(case_dep);
+
+    }
+
+    pub fn dump(&self) {
+        println!("Context, dependencies");
+        for dep in &self.dependencies {
+            println!("  test case: {}", dep.case);
+            for case in &dep.dependencies {
+                println!("    {}", case);
+            }
+        }
+    }
+}
+
+
 thread_local! {
-    //pub type ModuleRef = Rc<RefCell<Module>>;
-    // so this final type would be:  RefCell<Option<Rc<RefCell<Module
-    pub static CURRENT_TEST_MODULE: RefCell<Option<ModuleRef>> = RefCell::new(None);
-    //pub static CURRENT_TEST_MODULE: *mut ModuleRef = null();
+    pub static CONTEXT: RefCell<Context> = RefCell::new(Context::new());
 }
 fn dep_handler(glb_opt : &Option<ModuleRef>, str_name : &str, str_deplist : &str) {
     let glb_module_ref = glb_opt.as_ref().unwrap();
@@ -336,22 +383,7 @@ extern "C" fn dependency_handler(name : *const c_char, dep_list: *const c_char) 
     let str_name = unsafe { CStr::from_ptr(name).to_str().expect("assert error impl, exp error") };
     let str_deplist = unsafe { CStr::from_ptr(dep_list).to_str().expect("assert error impl, file error") };
 
-    CURRENT_TEST_MODULE.with(|state|dep_handler(state.borrow().deref(), str_name, str_deplist));
-/*
-    //CURRENT_TEST_MODULE.with_borrow(|crt| dep_handler(crt, str_name, str_deplist));
-    let mod_ref = CURRENT_TEST_MODULE.take().unwrap();
-    {
-        // Can't take this as 'mut' for some reason - I don't quite understand why...
-        let module = mod_ref.borrow();
-        println!("wef => {}", module.name);
-    }
-    // Set it again - needed??
-    CURRENT_TEST_MODULE.set(Some(mod_ref));
-
- */
-
-
-
+    CONTEXT.with(|ctx| ctx.borrow_mut().add_dependency(str_name, str_deplist));
 }
 
 
@@ -392,6 +424,8 @@ impl TestFunction {
         //println!("dynlib is='{}'", dynlib.name);
 
         //CURRENT_TEST_MODULE = Some(self.module.clone());
+
+        CONTEXT.set(Context::new());
 
         let lib = dynlib.borrow();
         let func = lib.get_testable_function(&self.export);
@@ -441,31 +475,6 @@ pub trait Singleton {
     fn instance() -> &'static Self;
 }
 
-struct CurrentRunningTestCase {
-    test_function: Option<Rc<TestFunction>>,
-}
-
-impl Singleton for CurrentRunningTestCase {
-    fn instance() -> &'static Self {
-        static mut GLB_CRT_SINGLETON: MaybeUninit<CurrentRunningTestCase> = MaybeUninit::uninit();
-        static ONCE: Once = Once::new();
-        unsafe {
-            ONCE.call_once(|| {
-                let singleton = CurrentRunningTestCase {
-                    test_function : None,
-                };
-                GLB_CRT_SINGLETON.write(singleton);
-            });
-            GLB_CRT_SINGLETON.assume_init_ref()
-        }
-    }
-}
-impl CurrentRunningTestCase {
-    fn set_current_test(&mut self, test_function: &Rc<TestFunction>) {
-        self.test_function = Some(Rc::clone(test_function));
-    }
-
-}
 
 impl Singleton for Config {
     fn instance() -> &'static Self {
