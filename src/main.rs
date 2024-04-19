@@ -9,13 +9,14 @@ use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, c_int, CStr, CString};
 use std::convert::TryFrom;
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
 use std::ptr::null;
 use std::string::ToString;
 use std::sync::{Once, Mutex, Arc};
+use std::time::{Duration, Instant};
 use clap::{Parser};
 
 use crate::test_interface::{TestRunnerInterface, TestableFunction, TestResult};
@@ -249,11 +250,12 @@ impl Module {
         // Execute main first, this will setup dependencies
 
         self.execute_main();
-        // FIXME: Execute dependencies
 
         println!("Execute test cases!");
         for tc in &self.test_cases {
             if tc.borrow().should_execute() {
+                // FIXME: Execute dependencies, should now be in the 'tc.dependencies'
+                //        note: from this point - 'depends' is an illegal callback - we should probably verify this
                 tc.borrow().execute(&self.dynlib)
             }
         }
@@ -267,6 +269,8 @@ impl Module {
         println!("Execute main!");
         let func = self.main_func.as_ref().unwrap();
         func.borrow().execute(&self.dynlib);
+
+        // Grab hold of the context and verify test-cases...
         let ctx = CONTEXT.take();
         if ctx.dependencies.is_empty() {
             println!("No dependencies");
@@ -274,6 +278,7 @@ impl Module {
         }
         println!("Dependencies");
         ctx.dump();
+        // FIXME: Look up the correct test-case (use case names) and then append the dependency list to the test-case
     }
 
     pub fn dump(&self) {
@@ -310,6 +315,10 @@ struct TestFunction {
 pub type TestFunctionRef = Rc<RefCell<TestFunction>>;
 
 
+//
+// The context is a global variable which is set fresh for each execution
+// It contains the everything happening during a single test-execution function...
+//
 struct Context {
     dependencies : Vec<CaseDependency>,
 }
@@ -413,29 +422,34 @@ impl TestFunction {
 
         return false;
     }
+
+    // FIXME: Should return result<>
     pub fn execute(&self, dynlib : &DynLibraryRef) {
 
 
+        // Spawn thread here, need to figure out what happens with the Context (since it is a thread-local) variable
+
         let mut trun_interface = TestRunnerInterface::new();
         trun_interface.case_depends = Some(dependency_handler);
-
-        //current_test_module.set("wef");
-
-        //println!("dynlib is='{}'", dynlib.name);
-
-        //CURRENT_TEST_MODULE = Some(self.module.clone());
-
         CONTEXT.set(Context::new());
 
         let lib = dynlib.borrow();
         let func = lib.get_testable_function(&self.export);
 
         let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
+
+
         println!("=== RUN \t{}",self.export);
+        let t_start = Instant::now();
         let raw_result = unsafe { func(ptr_trun) };
+        let duration = t_start.elapsed();
+        self.handle_test_return(raw_result, &duration);
+    }
+    fn handle_test_return(&self, raw_result : c_int, duration : &Duration) {
         let test_result = TestResult::try_from(raw_result); //.unwrap();
+        // Formatting..
         match test_result {
-            Ok(TestResult::Pass) => println!("=== PASS:\t{}, 0.00 sec, 0",self.export),
+            Ok(TestResult::Pass) => println!("=== PASS:\t{}, {} sec, {}",self.export, duration.as_secs_f32(), raw_result),
             Ok(TestResult::Fail) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
             Ok(TestResult::FailModule) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
             Ok(TestResult::FailAll) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
