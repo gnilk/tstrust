@@ -19,7 +19,7 @@ use std::sync::{Once, Mutex, Arc};
 use std::time::{Duration, Instant};
 use clap::{Parser};
 
-use crate::test_interface::{TestRunnerInterface, TestableFunction, TestResult};
+use crate::test_interface::{TestRunnerInterface, TestableFunction, TestResult, PrePostTestcaseFunction};
 use crate::dir_scanner::*;
 use crate::dyn_library::*;
 
@@ -49,6 +49,8 @@ struct Module {
     name : String,
     dynlib : DynLibraryRef,
     main_func : Option<TestFunctionRef>,
+    pre_case_func : Option<PrePostTestcaseFunction>,
+    post_case_func : Option<PrePostTestcaseFunction>,
     test_cases : Vec<TestFunctionRef>,
 }
 
@@ -205,6 +207,8 @@ impl Module {
             name : name.to_string(),
             dynlib : dyn_library.clone(),
             main_func : None,
+            post_case_func : None,
+            pre_case_func : None,
             test_cases : Vec::new(),
         };
 
@@ -247,18 +251,28 @@ impl Module {
     }
 
     pub fn execute(&self) {
-        // Execute main first, this will setup dependencies
-
+        // Execute main first, main can define various dependens plus pre/post functions
         self.execute_main();
 
-        println!("Execute test cases!");
+        // Execute actual test cases
         for tc in &self.test_cases {
-            if tc.borrow().should_execute() {
-                // FIXME: Execute dependencies, should now be in the 'tc.dependencies'
-                //        note: from this point - 'depends' is an illegal callback - we should probably verify this
-                tc.borrow().execute(&self.dynlib)
+            if !tc.borrow().should_execute() {
+                continue;
             }
+            self.execute_test(tc);
         }
+    }
+    fn execute_test(&self, tc : &TestFunctionRef) {
+
+        // FIXME: Need to protect against recursiveness here!
+        self.execute_dependencies(tc);
+        // FIXME: Execute dependencies, should now be in the 'tc.dependencies'
+        //        note: from this point - 'depends' is an illegal callback - we should probably verify this
+        tc.borrow().execute(&self.dynlib);
+
+        // We set this to true before actual execution to avoid recursive..
+        tc.borrow_mut().executed = true;
+
     }
 
     fn execute_main(&self) {
@@ -266,19 +280,48 @@ impl Module {
             return;
         }
 
-        println!("Execute main!");
+//        println!("Execute main!");
         let func = self.main_func.as_ref().unwrap();
         func.borrow().execute(&self.dynlib);
+        func.borrow_mut().executed = true;
 
         // Grab hold of the context and verify test-cases...
         let ctx = CONTEXT.take();
         if ctx.dependencies.is_empty() {
-            println!("No dependencies");
+//            println!("No dependencies");
             return;
         }
-        println!("Dependencies");
-        ctx.dump();
+//        println!("Dependencies");
+//        ctx.dump();
         // FIXME: Look up the correct test-case (use case names) and then append the dependency list to the test-case
+
+        for casedep in &ctx.dependencies {
+            if let Some(tc) = self.get_test_case(casedep.case.as_str()).ok() {
+                for dep in &casedep.dependencies {
+                    if let Some(tc_dep) = self.get_test_case(dep).ok() {
+                        tc.borrow_mut().dependencies.push(tc_dep.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    fn execute_dependencies(&self, test_function: &TestFunctionRef) {
+        for func in &test_function.borrow().dependencies {
+            if func.borrow().executed {
+                continue;
+            }
+            self.execute_test(func);
+        }
+    }
+
+    fn get_test_case(&self, case : &str) -> Result<&TestFunctionRef, ()> {
+        for tc in &self.test_cases {
+            if tc.borrow().name == case {
+                return Ok(tc);
+            }
+        }
+        return Err(());
     }
 
     pub fn dump(&self) {
@@ -305,11 +348,10 @@ enum CaseType {
 #[derive(Debug)]
 struct TestFunction {
     name : String,
-//    module : ModuleRef,
     case_type: CaseType,
     export : String,
     executed : bool,    // state?
-    dependencies : Vec<String>,
+    dependencies : Vec<TestFunctionRef>,
 }
 
 pub type TestFunctionRef = Rc<RefCell<TestFunction>>;
@@ -426,6 +468,9 @@ impl TestFunction {
     // FIXME: Should return result<>
     pub fn execute(&self, dynlib : &DynLibraryRef) {
 
+        if self.executed {
+            return;
+        }
 
         // Spawn thread here, need to figure out what happens with the Context (since it is a thread-local) variable
 

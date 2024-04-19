@@ -49,7 +49,7 @@ pub struct TestRunnerInterface {
     pub case_depends : Option<DependsHandler>,
 }
 pub type TestableFunction = unsafe extern "C" fn(*mut TestRunnerInterface) -> c_int;
-
+pub type PrePostTestcaseFunction = unsafe extern "C" fn(*mut TestRunnerInterface) -> c_void;
 
 extern "C" fn assert_error_impl(exp : *const c_char, file : *const c_char, line : c_int) {
 

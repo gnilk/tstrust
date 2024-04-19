@@ -8,9 +8,12 @@ various interesting aspects (threads, interfacing with dynamically loaded librar
 Plus, I can use the real version as a 'unit-test'.
 
 ## TO-DO List
-* Dependency handling
-* Better return codes (in quite a lot of places)
-* Threading for test-case execution
-* Output formatting
-* Nicer split in sub-modules
-* Reporting
+<pre>
++ Dependency handling
++ Pre/Post case handling
+- Better internal return codes (in quite a lot of places)
+- Threading for test-case execution
+- Output formatting
+- Nicer split in sub-modules
+- Reporting
+</pre>
