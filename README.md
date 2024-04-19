@@ -10,6 +10,7 @@ Plus, I can use the real version as a 'unit-test'.
 ## TO-DO List
 * Dependency handling
 * Better return codes (in quite a lot of places)
+* Threading for test-case execution
 * Output formatting
 * Nicer split in sub-modules
 * Reporting
