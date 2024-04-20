@@ -16,4 +16,8 @@ Plus, I can use the real version as a 'unit-test'.
 - Output formatting
 - Nicer split in sub-modules
 - Reporting
+! Separate TestResult structure
+  ! Handle assert-errors and store in TestResult
+- Rename 'TestResultClass' to TestReturnCode
+- Circular dependencies ('cdepends' from unit-test of testrunner)
 </pre>

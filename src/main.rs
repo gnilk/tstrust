@@ -19,7 +19,7 @@ use std::sync::{Once, Mutex, Arc};
 use std::time::{Duration, Instant};
 use clap::{Parser};
 
-use crate::test_interface::{TestRunnerInterface, TestableFunction, TestResult, PrePostTestcaseFunction};
+use crate::test_interface::{TestRunnerInterface, TestableFunction, TestResultClass, PrePostTestcaseFunction};
 use crate::dir_scanner::*;
 use crate::dyn_library::*;
 
@@ -268,7 +268,7 @@ impl Module {
         self.execute_dependencies(tc);
         // FIXME: Execute dependencies, should now be in the 'tc.dependencies'
         //        note: from this point - 'depends' is an illegal callback - we should probably verify this
-        tc.borrow().execute(&self.dynlib);
+        tc.borrow_mut().execute(&self.dynlib);
 
         // We set this to true before actual execution to avoid recursive..
         tc.borrow_mut().executed = true;
@@ -282,7 +282,7 @@ impl Module {
 
 //        println!("Execute main!");
         let func = self.main_func.as_ref().unwrap();
-        func.borrow().execute(&self.dynlib);
+        func.borrow_mut().execute(&self.dynlib);
         func.borrow_mut().executed = true;
 
         // Grab hold of the context and verify test-cases...
@@ -352,10 +352,77 @@ struct TestFunction {
     export : String,
     executed : bool,    // state?
     dependencies : Vec<TestFunctionRef>,
+    test_result: TestResult,
 }
-
 pub type TestFunctionRef = Rc<RefCell<TestFunction>>;
 
+#[derive(Debug)]
+pub struct TestResult {
+    result_class : Result<TestResultClass,()>, // raw c_int enum from ITestInterface converted to internal enum after execution
+    assert_error: Option<AssertError>,
+    raw_result : c_int,
+    t_elapsed : Duration,
+    num_error : u32,
+    num_assert : u32,
+    symbol : String,
+}
+#[derive(Debug)]
+pub enum AssertClass {
+    Error,
+    Abort,
+    Fatal,
+}
+#[derive(Debug)]
+pub struct AssertError {
+    assert_class: AssertClass,
+    file : String,
+    line : u32,
+    message : String,
+}
+impl AssertError {
+    pub fn new(file : &str, line : u32, message : &str) -> AssertError {
+        Self {
+            assert_class : AssertClass::Error,
+            file : file.to_string(),
+            line : line,
+            message : message.to_string(),
+        }
+    }
+    pub fn print(&self) {
+        // Ensure equal spacing with the logger from original test-runner
+        print!("                                                                                     ");
+        // Now print the error code..
+        println!("Assert Error: {}:{}\t'{}'", self.file, self.line, self.message);
+    }
+}
+
+impl TestResult {
+    pub fn new() -> TestResult {
+        Self {
+            result_class : Ok(TestResultClass::NotExecuted),
+            assert_error : None,
+            t_elapsed : Duration::new(0,0),
+            num_assert : 0,
+            num_error : 0,
+            symbol : String::default(),
+            raw_result : 0,
+        }
+    }
+    pub fn print(&self) {
+        //
+        // Asserts are not printed here - they are printed as they come up..
+        //
+        match self.result_class {
+            Ok(TestResultClass::Pass) => println!("=== PASS:\t{}, {} sec, {}", self.symbol, self.t_elapsed.as_secs_f32(), self.raw_result),
+            Ok(TestResultClass::Fail) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.t_elapsed.as_secs_f32(), self.raw_result),
+            Ok(TestResultClass::FailModule) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.t_elapsed.as_secs_f32(), self.raw_result),
+            Ok(TestResultClass::FailAll) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.t_elapsed.as_secs_f32(), self.raw_result),
+            _ => println!("=== INVALID RETURN CODE ({}) for {}", self.raw_result,self.symbol),
+        }
+        // Empty line in the console output
+        println!("");
+    }
+}
 
 //
 // The context is a global variable which is set fresh for each execution
@@ -363,6 +430,7 @@ pub type TestFunctionRef = Rc<RefCell<TestFunction>>;
 //
 struct Context {
     dependencies : Vec<CaseDependency>,
+    assert_error : Option<AssertError>,
 }
 struct CaseDependency {
     case : String,
@@ -373,6 +441,7 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             dependencies : Vec::new(),
+            assert_error : None,
         }
     }
 }
@@ -380,6 +449,7 @@ impl Context {
     pub fn new() -> Context {
         Self {
             dependencies : Vec::new(),
+            assert_error : None,
         }
     }
     pub fn add_dependency(&mut self, case: &str, deplist: &str) {
@@ -395,6 +465,15 @@ impl Context {
         }
         self.dependencies.push(case_dep);
 
+    }
+    pub fn set_assert_error(&mut self, assert_class: AssertClass, line : u32, file : &str, message : &str) {
+        let assert_error = AssertError {
+          assert_class : assert_class,
+            line : line,
+            file : file.to_string(),
+            message : message.to_string(),
+        };
+        self.assert_error = Some(assert_error);
     }
 
     pub fn dump(&self) {
@@ -437,6 +516,20 @@ extern "C" fn dependency_handler(name : *const c_char, dep_list: *const c_char) 
     CONTEXT.with(|ctx| ctx.borrow_mut().add_dependency(str_name, str_deplist));
 }
 
+extern "C" fn assert_error_handler(exp : *const c_char, file : *const c_char, line : c_int) {
+
+    let str_exp = unsafe { CStr::from_ptr(exp).to_str().expect("assert error impl, exp error") };
+    let str_file = unsafe { CStr::from_ptr(file).to_str().expect("assert error impl, file error") };
+
+    // NOTE: This is normally printed with the logger
+    //println!("Assert Error: {}:{}\t'{}'", str_file, line, str_exp);
+
+    let assert_error = AssertError::new(str_file, line as u32, str_exp);
+    assert_error.print();
+    CONTEXT.with_borrow_mut(|ctx| ctx.assert_error = Some(assert_error));
+}
+
+
 
 impl TestFunction {
     pub fn new(name :&str, case_type: CaseType, export : String, module : ModuleRef) -> TestFunctionRef {
@@ -447,6 +540,7 @@ impl TestFunction {
             export : export.to_string(),
             executed : false,
             dependencies : Vec::new(),
+            test_result : TestResult::new(),
         };
         return Rc::new(RefCell::new(test_function));
     }
@@ -466,7 +560,7 @@ impl TestFunction {
     }
 
     // FIXME: Should return result<>
-    pub fn execute(&self, dynlib : &DynLibraryRef) {
+    pub fn execute(&mut self, dynlib : &DynLibraryRef) {
 
         if self.executed {
             return;
@@ -476,6 +570,7 @@ impl TestFunction {
 
         let mut trun_interface = TestRunnerInterface::new();
         trun_interface.case_depends = Some(dependency_handler);
+        trun_interface.assert_error = Some(assert_error_handler);
         CONTEXT.set(Context::new());
 
         let lib = dynlib.borrow();
@@ -488,18 +583,33 @@ impl TestFunction {
         let t_start = Instant::now();
         let raw_result = unsafe { func(ptr_trun) };
         let duration = t_start.elapsed();
-        self.handle_test_return(raw_result, &duration);
+
+        // Create test result
+
+        self.test_result.t_elapsed = duration;
+
+        CONTEXT.with_borrow_mut(|ctx| self.handle_result_from_ctx(ctx));
+        //self.test_result.result_class = Ok(TestResultClass::Pass);
+        self.handle_test_return(raw_result);
+        self.test_result.symbol = self.export.clone();
+
+        //
+        self.test_result.print();
     }
-    fn handle_test_return(&self, raw_result : c_int, duration : &Duration) {
-        let test_result = TestResult::try_from(raw_result); //.unwrap();
-        // Formatting..
-        match test_result {
-            Ok(TestResult::Pass) => println!("=== PASS:\t{}, {} sec, {}",self.export, duration.as_secs_f32(), raw_result),
-            Ok(TestResult::Fail) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
-            Ok(TestResult::FailModule) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
-            Ok(TestResult::FailAll) => println!("=== FAIL:\t{}, 0.00 sec, 0",self.export),
-            _ => println!("=== INVALID RETURN CODE ({}) for {}", raw_result,self.export),
+    fn handle_result_from_ctx(&mut self, context: &mut Context) {
+        self.test_result.assert_error = context.assert_error.take();
+    }
+    fn handle_test_return(&mut self, raw_result : c_int) {
+        self.test_result.raw_result = raw_result;
+        // Assert takes predence..
+        if (self.test_result.assert_error.is_some()) {
+            self.test_result.result_class = Ok(TestResultClass::Fail);
+        } else {
+            self.test_result.result_class = TestResultClass::try_from(raw_result);
         }
+    }
+    fn print_result(&self) {
+        self.test_result.print();
     }
 }
 

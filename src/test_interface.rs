@@ -1,4 +1,5 @@
 use std::ffi::{c_char, c_int, c_void, CStr};
+use std::time::Duration;
 
 // Can most likely transform this...
 pub const K_TR_PASS: u32 = 0;
@@ -6,22 +7,30 @@ pub const K_TR_FAIL: u32 = 16;
 pub const K_TR_FAIL_MODULE: u32 = 32;
 pub const K_TR_FAIL_ALL: u32 = 48;
 
-pub enum TestResult {
+#[derive(Debug)]
+pub enum TestResultClass {
     Pass = 0,
     Fail = 16,
     FailModule = 32,
     FailAll = 48,
+    NotExecuted = 64,
+    InvalidReturnCode = 65,
 }
 
 
-impl TryFrom<c_int> for TestResult {
+
+
+
+
+
+impl TryFrom<c_int> for TestResultClass {
     type Error = ();
     fn try_from(v : c_int) -> Result<Self, Self::Error> {
         match v {
-            x if x == TestResult::Pass as c_int => Ok(TestResult::Pass),
-            x if x == TestResult::Fail as c_int => Ok(TestResult::Fail),
-            x if x == TestResult::FailModule as c_int => Ok(TestResult::FailModule),
-            x if x == TestResult::FailAll as c_int => Ok(TestResult::FailAll),
+            x if x == TestResultClass::Pass as c_int => Ok(TestResultClass::Pass),
+            x if x == TestResultClass::Fail as c_int => Ok(TestResultClass::Fail),
+            x if x == TestResultClass::FailModule as c_int => Ok(TestResultClass::FailModule),
+            x if x == TestResultClass::FailAll as c_int => Ok(TestResultClass::FailAll),
             _ => Err(())
         }
     }
@@ -41,7 +50,7 @@ pub struct TestRunnerInterface {
     pub fatal : Option<LogHandler>,
     pub abort : Option<LogHandler>,
 
-    pub assert_error : AssertErrorHandler,
+    pub assert_error : Option<AssertErrorHandler>,
 
     pub set_pre_case_callback : Option<CaseHandler>,
     pub set_post_case_callback : Option<CaseHandler>,
@@ -51,14 +60,6 @@ pub struct TestRunnerInterface {
 pub type TestableFunction = unsafe extern "C" fn(*mut TestRunnerInterface) -> c_int;
 pub type PrePostTestcaseFunction = unsafe extern "C" fn(*mut TestRunnerInterface) -> c_void;
 
-extern "C" fn assert_error_impl(exp : *const c_char, file : *const c_char, line : c_int) {
-
-    let str_exp = unsafe { CStr::from_ptr(exp).to_str().expect("assert error impl, exp error") };
-    let str_file = unsafe { CStr::from_ptr(file).to_str().expect("assert error impl, file error") };
-
-    // NOTE: This is normally printed with the logger
-    println!("Assert Error: {}:{}\t'{}'", str_file, line, str_exp);
-}
 
 
 impl TestRunnerInterface {
@@ -72,7 +73,7 @@ impl TestRunnerInterface {
             fatal: None,
             abort: None,
 
-            assert_error: assert_error_impl,
+            assert_error: None,
 
             set_pre_case_callback : None,
             set_post_case_callback : None,
