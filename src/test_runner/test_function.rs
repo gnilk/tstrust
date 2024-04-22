@@ -13,10 +13,18 @@ pub enum CaseType {
     ModuleExit,
     Regular,
 }
+
+#[derive(Debug)]
+enum State {
+    Idle,
+    Executing,
+    Finished,
+}
 #[derive(Debug)]
 pub struct TestFunction {
     pub name : String,
     pub export : String,
+    state : State,
     case_type: CaseType,
     executed : bool,    // state?
     pub dependencies : Vec<TestFunctionRef>,
@@ -103,6 +111,7 @@ impl TestFunction {
     pub fn new(name :&str, case_type: CaseType, export : String, module : ModuleRef) -> TestFunctionRef {
         let test_function = TestFunction {
             name : name.to_string(),
+            state : State::Idle,
             //module : module,
             case_type : case_type,
             export : export.to_string(),
@@ -115,8 +124,10 @@ impl TestFunction {
     pub fn should_execute(&self) -> bool {
         let cfg = Config::instance();
         // already executed?
-        if self.executed {
-            return false;
+        match self.state {
+            State::Finished => return false,
+            State::Executing => return false,
+            _ => (),
         }
 
         // Are we part of execution chain?
@@ -127,20 +138,35 @@ impl TestFunction {
         return false;
     }
 
-    pub fn set_executed(&mut self) {
-        self.executed = true;
+    pub fn is_finished(&self) -> bool {
+        match self.state {
+            State::Finished => return true,
+            _ => return false,
+        }
+    }
+    pub fn is_idle(&self) -> bool {
+        match self.state {
+            State::Idle => return true,
+            _ => return false,
+        }
     }
 
-    pub fn is_executed(&self) -> bool {
-        return self.executed;
+    fn change_state(&mut self, new_state : State) {
+        self.state = new_state;
     }
+
 
     // FIXME: Should return result<>
     pub fn execute(&mut self, dynlib : &DynLibraryRef) {
-
-        if self.executed {
-            return;
+        match self.state {
+            State::Idle => (),
+            _ => return,
         }
+
+        self.change_state(State::Executing);
+
+
+        self.execute_dependencies(dynlib);
 
         // Spawn thread here, need to figure out what happens with the Context (since it is a thread-local) variable
 
@@ -171,7 +197,22 @@ impl TestFunction {
 
         //
         self.test_result.print();
+        self.change_state(State::Finished);
     }
+
+    fn execute_dependencies(&mut self, dynlib : &DynLibraryRef) {
+        for func in &self.dependencies {
+            if func.try_borrow().is_err() {
+                // circular dependency - we are probably already executing this - as we have a borrow on it while executing..
+                continue;
+            }
+            if !func.borrow().is_idle() {
+                continue;
+            }
+            func.borrow_mut().execute(dynlib)
+        }
+    }
+
     fn handle_result_from_ctx(&mut self, context: &mut Context) {
         self.test_result.assert_error = context.assert_error.take();
     }

@@ -80,15 +80,7 @@ impl Module {
     }
     fn execute_test(&self, tc : &TestFunctionRef) {
 
-        // FIXME: Need to protect against recursiveness here!
-        self.execute_dependencies(tc);
-        // FIXME: Execute dependencies, should now be in the 'tc.dependencies'
-        //        note: from this point - 'depends' is an illegal callback - we should probably verify this
         tc.borrow_mut().execute(&self.dynlib);
-
-        // FIXME: Set this in 'execute' directly?
-        tc.borrow_mut().set_executed();
-
     }
 
     fn execute_main(&self) {
@@ -99,7 +91,6 @@ impl Module {
 //        println!("Execute main!");
         let func = self.main_func.as_ref().unwrap();
         func.borrow_mut().execute(&self.dynlib);
-        func.borrow_mut().set_executed();
 
         // Grab hold of the context and verify test-cases...
         let ctx = CONTEXT.take();
@@ -119,15 +110,6 @@ impl Module {
                     }
                 }
             }
-        }
-    }
-
-    fn execute_dependencies(&self, test_function: &TestFunctionRef) {
-        for func in &test_function.borrow().dependencies {
-            if func.borrow().is_executed() {
-                continue;
-            }
-            self.execute_test(func);
         }
     }
 
