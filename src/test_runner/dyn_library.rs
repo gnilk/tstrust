@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::ffi::CString;
 use std::process::Command;
 use libloading::{Symbol};
-use crate::test_interface::TestableFunction;
+use crate::test_runner::TestableFunction;
 
 #[derive(Debug)]
 pub struct DynLibrary {

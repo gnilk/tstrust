@@ -1,5 +1,4 @@
-use std::ffi::{c_char, c_int, c_void, CStr};
-use std::time::Duration;
+use std::ffi::{c_char, c_int, c_void};
 
 // Can most likely transform this...
 pub const K_TR_PASS: u32 = 0;
