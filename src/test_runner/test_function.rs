@@ -26,13 +26,16 @@ pub type TestFunctionRef = Rc<RefCell<TestFunction>>;
 
 #[derive(Debug)]
 pub struct TestResult {
-    result_class : Result<TestResultClass,()>, // raw c_int enum from ITestInterface converted to internal enum after execution
-    assert_error: Option<AssertError>,
-    raw_result : c_int,
-    t_elapsed : Duration,
-    num_error : u32,
-    num_assert : u32,
-    symbol : String,
+    exec_duration: Duration,
+
+    raw_return_code: c_int,     // The return code from the C/C++ function, use 'TestReturnCode::try_from' to transform and verify
+    return_code: Result<TestReturnCode,()>, // raw c_int enum from ITestInterface converted to internal enum after execution
+
+    assert_error: Option<AssertError>,        // Holds the assert error msg if any..
+    num_error : u32,            // Note: Always one, if an error occurs - however, embedded or single-threading can have several
+    num_assert : u32,           // Note: Always one, if an error occurs - however, embedded or single-threading can have several
+
+    symbol : String,            // The actual exported symbol
 }
 
 //
@@ -70,25 +73,25 @@ extern "C" fn assert_error_handler(exp : *const c_char, file : *const c_char, li
 impl TestResult {
     pub fn new() -> TestResult {
         Self {
-            result_class : Ok(TestResultClass::NotExecuted),
+            return_code: Ok(TestReturnCode::NotExecuted),
             assert_error : None,
-            t_elapsed : Duration::new(0,0),
+            exec_duration: Duration::new(0, 0),
             num_assert : 0,
             num_error : 0,
             symbol : String::default(),
-            raw_result : 0,
+            raw_return_code: 0,
         }
     }
     pub fn print(&self) {
         //
         // Asserts are not printed here - they are printed as they come up..
         //
-        match self.result_class {
-            Ok(TestResultClass::Pass) => println!("=== PASS:\t{}, {} sec, {}", self.symbol, self.t_elapsed.as_secs_f32(), self.raw_result),
-            Ok(TestResultClass::Fail) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.t_elapsed.as_secs_f32(), self.raw_result),
-            Ok(TestResultClass::FailModule) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.t_elapsed.as_secs_f32(), self.raw_result),
-            Ok(TestResultClass::FailAll) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.t_elapsed.as_secs_f32(), self.raw_result),
-            _ => println!("=== INVALID RETURN CODE ({}) for {}", self.raw_result,self.symbol),
+        match self.return_code {
+            Ok(TestReturnCode::Pass) => println!("=== PASS:\t{}, {} sec, {}", self.symbol, self.exec_duration.as_secs_f32(), self.raw_return_code),
+            Ok(TestReturnCode::Fail) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.exec_duration.as_secs_f32(), self.raw_return_code),
+            Ok(TestReturnCode::FailModule) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.exec_duration.as_secs_f32(), self.raw_return_code),
+            Ok(TestReturnCode::FailAll) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.exec_duration.as_secs_f32(), self.raw_return_code),
+            _ => println!("=== INVALID RETURN CODE ({}) for {}", self.raw_return_code, self.symbol),
         }
         // Empty line in the console output
         println!("");
@@ -159,7 +162,7 @@ impl TestFunction {
 
         // Create test result
 
-        self.test_result.t_elapsed = duration;
+        self.test_result.exec_duration = duration;
 
         CONTEXT.with_borrow_mut(|ctx| self.handle_result_from_ctx(ctx));
         //self.test_result.result_class = Ok(TestResultClass::Pass);
@@ -173,12 +176,12 @@ impl TestFunction {
         self.test_result.assert_error = context.assert_error.take();
     }
     fn handle_test_return(&mut self, raw_result : c_int) {
-        self.test_result.raw_result = raw_result;
+        self.test_result.raw_return_code = raw_result;
         // Assert takes predence..
         if self.test_result.assert_error.is_some() {
-            self.test_result.result_class = Ok(TestResultClass::Fail);
+            self.test_result.return_code = Ok(TestReturnCode::Fail);
         } else {
-            self.test_result.result_class = TestResultClass::try_from(raw_result);
+            self.test_result.return_code = TestReturnCode::try_from(raw_result);
         }
     }
     fn print_result(&self) {

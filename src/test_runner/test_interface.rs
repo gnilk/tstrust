@@ -7,11 +7,12 @@ pub const K_TR_FAIL_MODULE: u32 = 32;
 pub const K_TR_FAIL_ALL: u32 = 48;
 
 #[derive(Debug)]
-pub enum TestResultClass {
+pub enum TestReturnCode {
     Pass = 0,
     Fail = 16,
     FailModule = 32,
     FailAll = 48,
+    // FIXME: Should not be here!
     NotExecuted = 64,
     InvalidReturnCode = 65,
 }
@@ -22,14 +23,14 @@ pub enum TestResultClass {
 
 
 
-impl TryFrom<c_int> for TestResultClass {
+impl TryFrom<c_int> for TestReturnCode {
     type Error = ();
     fn try_from(v : c_int) -> Result<Self, Self::Error> {
         match v {
-            x if x == TestResultClass::Pass as c_int => Ok(TestResultClass::Pass),
-            x if x == TestResultClass::Fail as c_int => Ok(TestResultClass::Fail),
-            x if x == TestResultClass::FailModule as c_int => Ok(TestResultClass::FailModule),
-            x if x == TestResultClass::FailAll as c_int => Ok(TestResultClass::FailAll),
+            x if x == TestReturnCode::Pass as c_int => Ok(TestReturnCode::Pass),
+            x if x == TestReturnCode::Fail as c_int => Ok(TestReturnCode::Fail),
+            x if x == TestReturnCode::FailModule as c_int => Ok(TestReturnCode::FailModule),
+            x if x == TestReturnCode::FailAll as c_int => Ok(TestReturnCode::FailAll),
             _ => Err(())
         }
     }
