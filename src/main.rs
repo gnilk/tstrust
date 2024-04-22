@@ -74,10 +74,11 @@ impl App {
         let library = Rc::new(DynLibrary::new(filename));
 
         // TEST TEST
-        // let mut tr = TestRunner::new();
-        // tr.prepare_tests(&library);
+        let mut tr = TestRunner::new(&library);
+        tr.prescan();
+        tr.dump();
 
-
+/*
         let modules = modules_from_dynlib(&library);
         for (name, module) in modules.into_iter() {
             // I don't like the fact that this must be unsafe.. really need to consider putting this in a context object..
@@ -87,6 +88,8 @@ impl App {
                 self.modules_to_test.insert(name, module);
             }
         }
+
+ */
     }
 
     fn list_tests(&self) {
@@ -102,7 +105,7 @@ impl App {
                     true => print!("*"),
                     false => print!("-"),
                 }
-                println!("  {}::{} ({})", module.borrow().name, tc.borrow().name, tc.borrow().export);
+                println!("  {}::{} ({})", module.borrow().name, tc.borrow().case_name, tc.borrow().symbol);
             }
         }
     }

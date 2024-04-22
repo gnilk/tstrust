@@ -6,9 +6,11 @@ use crate::test_runner::*;
 pub struct Module {
     pub name : String,
     dynlib : DynLibraryRef,
-    main_func : Option<TestFunctionRef>,
     pub pre_case_func : Option<PrePostCaseHandler>,
     pub post_case_func : Option<PrePostCaseHandler>,
+
+    pub main_func : Option<TestFunctionRef>,
+    pub exit_func : Option<TestFunctionRef>,
     pub test_cases : Vec<TestFunctionRef>,
 }
 
@@ -23,6 +25,7 @@ impl Module {
             name : name.to_string(),
             dynlib : dyn_library.clone(),
             main_func : None,
+            exit_func : None,
             post_case_func : None,
             pre_case_func : None,
             test_cases : Vec::new(),
@@ -46,13 +49,13 @@ impl Module {
             // special handling for 'test_<module>' => CaseType::ModuleMain
             if (parts.len() == 2) && (parts[1] == self.name) {
                 // println!("  main, func={},  export={}", parts[1], e);
-                self.main_func = Some(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string(), module.clone()));
+                self.main_func = Some(TestFunction::new(e, "-", &parts[1]));
                 //self.test_cases.push(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string()));
             } else {
                 // join the case name together again...
                 let case_name = parts[2..].join("_");
                 // println!("  case, func={},  export={}", case_name, e);
-                self.test_cases.push(TestFunction::new(&case_name, CaseType::Regular, e.to_string(), module.clone()));
+                self.test_cases.push(TestFunction::new(e, &parts[2], &case_name));
             }
         }
     }
@@ -128,7 +131,7 @@ impl Module {
 
     fn get_test_case(&self, case : &str) -> Result<&TestFunctionRef, ()> {
         for tc in &self.test_cases {
-            if tc.borrow().name == case {
+            if tc.borrow().case_name == case {
                 return Ok(tc);
             }
         }

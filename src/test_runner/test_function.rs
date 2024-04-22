@@ -2,15 +2,20 @@ use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use libloading::Symbol;
 use crate::test_runner::*;
 
 // Testable function
 #[derive(Debug)]
-pub enum CaseType {
+pub enum TestScope {
+    Global,
+    Module,
+}
+
+#[derive(Debug)]
+pub enum TestType {
     Main,
     Exit,
-    ModuleMain,
-    ModuleExit,
     Regular,
 }
 
@@ -22,10 +27,14 @@ enum State {
 }
 #[derive(Debug)]
 pub struct TestFunction {
-    pub name : String,
-    pub export : String,
+    pub case_name: String,
+    pub module_name : String,
+    pub symbol: String,
+
+    pub test_scope : TestScope,
+    pub test_type: TestType,
+
     state : State,
-    case_type: CaseType,
     executed : bool,    // state?
     pub dependencies : Vec<TestFunctionRef>,
     test_result: TestResult,
@@ -116,13 +125,40 @@ impl TestResult {
 
 
 impl TestFunction {
-    pub fn new(name :&str, case_type: CaseType, export : String, module : ModuleRef) -> TestFunctionRef {
+    pub fn new(symbol : &str, module : &str, case : &str) -> TestFunctionRef {
+        let mut test_scope = TestScope::Module;
+        let mut test_type = TestType::Regular;
+        let mut new_module_name = module.to_string();
+
+        if (module == "-") && (case == Config::instance().main_func_name) {
+            // global main is: 'test_main'
+            test_type = TestType::Main;
+            test_scope = TestScope::Global;
+        } else if (module == "-" && (case == Config::instance().exit_func_name)) {
+            // global exit is: 'test_exit'
+            test_type = TestType::Exit;
+            test_scope = TestScope::Global;
+        } else {
+            // scope is already 'module' so skip that...
+            if module == "-" {
+                // test_<module>  <- module main
+                new_module_name = case.to_string();
+                test_type = TestType::Main;
+            } else if case == Config::instance().exit_func_name {
+                // Module exit is: 'test_<module>_<exit>
+                test_type = TestType::Exit;
+            }
+        }
+
         let test_function = TestFunction {
-            name : name.to_string(),
+            case_name: case.to_string(),
+            module_name: new_module_name,
+            symbol : symbol.to_string(),
+            test_scope,
+            test_type,
+
             state : State::Idle,
             //module : module,
-            case_type : case_type,
-            export : export.to_string(),
             executed : false,
             dependencies : Vec::new(),
             test_result : TestResult::new(),
@@ -139,7 +175,7 @@ impl TestFunction {
         }
 
         // Are we part of execution chain?
-        if cfg.testcases.contains(&"-".to_string()) || cfg.testcases.contains(&self.name) {
+        if cfg.testcases.contains(&"-".to_string()) || cfg.testcases.contains(&self.case_name) {
             return true;
         }
 
@@ -163,6 +199,17 @@ impl TestFunction {
         self.state = new_state;
     }
 
+    pub fn is_global(&self) -> bool {
+        return self.module_name == "-";
+    }
+    pub fn is_global_main(&self) -> bool {
+        return self.is_global() && (self.case_name == Config::instance().main_func_name);
+    }
+
+    pub fn is_global_exit(&self) -> bool {
+        return self.is_global() && (self.case_name == Config::instance().exit_func_name);
+    }
+
 
     // FIXME: Should return result<>
     pub fn execute(&mut self, module : &Module, dynlib : &DynLibraryRef) {
@@ -175,7 +222,7 @@ impl TestFunction {
         self.execute_dependencies(module, dynlib);
 
         // Spawn thread here, need to figure out what happens with the Context (since it is a thread-local) variable
-        println!("=== RUN \t{}",self.export);
+        println!("=== RUN \t{}",self.symbol);
 
         // Start the timer - do NOT include 'dependencies' in the timing - they are just a way of controlling execution
         let t_start = Instant::now();
@@ -201,7 +248,7 @@ impl TestFunction {
 
         // Look up the symbol and exeecute
         let lib = dynlib.borrow();
-        let func = lib.get_testable_function(&self.export);
+        let func = lib.get_testable_function(&self.symbol);
         let raw_result = unsafe { func(ptr_trun) };
 
         // Execute post case handler - if any...
@@ -216,7 +263,7 @@ impl TestFunction {
         // mainly because some 'setters' are module-level setters while some getters are module level getters...
         CONTEXT.with_borrow_mut(|ctx| self.handle_result_from_ctx(ctx));
         self.handle_test_return(raw_result);
-        self.test_result.symbol = self.export.clone();
+        self.test_result.symbol = self.symbol.clone();
 
         self.test_result.print();
 
