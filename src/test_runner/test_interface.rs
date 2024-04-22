@@ -18,11 +18,6 @@ pub enum TestReturnCode {
 }
 
 
-
-
-
-
-
 impl TryFrom<c_int> for TestReturnCode {
     type Error = ();
     fn try_from(v : c_int) -> Result<Self, Self::Error> {
@@ -36,9 +31,12 @@ impl TryFrom<c_int> for TestReturnCode {
     }
 }
 
+pub type TestableFunction = unsafe extern "C" fn(*mut TestRunnerInterface) -> c_int;
+pub type PrePostCaseHandler = extern "C" fn(*mut TestRunnerInterface) -> c_void;
 pub type AssertErrorHandler = extern "C" fn(exp : *const c_char, file : *const c_char, line : c_int);
 pub type LogHandler =  extern "C" fn (line : c_int, file: *const c_char, format: *const c_char, ...) -> c_void;
-pub type CaseHandler = extern "C" fn(case: *mut TestRunnerInterface);
+//pub type CaseHandler = extern "C" fn(case_handler: *mut TestRunnerInterface);
+pub type CaseHandler = extern "C" fn(case_handler: PrePostCaseHandler);
 pub type DependsHandler = extern "C" fn(name : *const c_char, dep_list: *const c_char);
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -57,8 +55,6 @@ pub struct TestRunnerInterface {
 
     pub case_depends : Option<DependsHandler>,
 }
-pub type TestableFunction = unsafe extern "C" fn(*mut TestRunnerInterface) -> c_int;
-pub type PrePostTestcaseFunction = unsafe extern "C" fn(*mut TestRunnerInterface) -> c_void;
 
 
 

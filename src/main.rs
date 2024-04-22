@@ -72,6 +72,12 @@ impl App {
     }
     fn scan_library(&mut self, filename: &str) {
         let library = Rc::new(DynLibrary::new(filename));
+
+        // TEST TEST
+        // let mut tr = TestRunner::new();
+        // tr.prepare_tests(&library);
+
+
         let modules = modules_from_dynlib(&library);
         for (name, module) in modules.into_iter() {
             // I don't like the fact that this must be unsafe.. really need to consider putting this in a context object..
@@ -102,12 +108,15 @@ impl App {
     }
 
     fn execute_tests(&mut self) {
+
+
+
         for (_, module) in &self.modules_to_test {
             if !module.borrow().should_execute() {
                 continue;
             }
             println!(" Module: {}",module.borrow().name);
-            module.borrow().execute();
+            module.borrow_mut().execute();
         }
     }
 

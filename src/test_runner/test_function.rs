@@ -54,6 +54,14 @@ thread_local! {
     pub static CONTEXT: RefCell<Context> = RefCell::new(Context::new());
 }
 
+extern "C" fn set_pre_case_handler(case_handler: PrePostCaseHandler) {
+    println!("PRE_CASE_CALLED!");
+    CONTEXT.with(|ctx| ctx.borrow_mut().pre_case_handler = Some(case_handler));
+}
+extern "C" fn set_post_case_handler(case_handler: PrePostCaseHandler) {
+    println!("POST_CASE_CALLED!");
+    CONTEXT.with(|ctx| ctx.borrow_mut().post_case_handler = Some(case_handler));
+}
 
 extern "C" fn dependency_handler(name : *const c_char, dep_list: *const c_char) {
     // This needs access to a global variable!!
@@ -157,50 +165,65 @@ impl TestFunction {
 
 
     // FIXME: Should return result<>
-    pub fn execute(&mut self, dynlib : &DynLibraryRef) {
+    pub fn execute(&mut self, module : &Module, dynlib : &DynLibraryRef) {
         match self.state {
             State::Idle => (),
             _ => return,
         }
 
         self.change_state(State::Executing);
-
-
-        self.execute_dependencies(dynlib);
+        self.execute_dependencies(module, dynlib);
 
         // Spawn thread here, need to figure out what happens with the Context (since it is a thread-local) variable
+        println!("=== RUN \t{}",self.export);
 
+        // Start the timer - do NOT include 'dependencies' in the timing - they are just a way of controlling execution
+        let t_start = Instant::now();
+
+        // Create the test runner interface...
         let mut trun_interface = TestRunnerInterface::new();
         trun_interface.case_depends = Some(dependency_handler);
         trun_interface.assert_error = Some(assert_error_handler);
-        CONTEXT.set(Context::new());
-
-        let lib = dynlib.borrow();
-        let func = lib.get_testable_function(&self.export);
-
+        trun_interface.set_pre_case_callback = Some(set_pre_case_handler);
+        trun_interface.set_post_case_callback = Some(set_post_case_handler);
         let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
 
+        // And the context..
+        CONTEXT.set(Context::new());
 
-        println!("=== RUN \t{}",self.export);
-        let t_start = Instant::now();
+
+        // Note: We do this here - as we align to the existing C/C++ test runner
+        //       otherwise we could simply run in the module it-self (which might have been more prudent)
+        // Execute pre case handler - if any has been assigned
+        if (module.pre_case_func.is_some()) {
+            module.pre_case_func.as_ref().unwrap()(ptr_trun);
+        }
+
+        // Look up the symbol and exeecute
+        let lib = dynlib.borrow();
+        let func = lib.get_testable_function(&self.export);
         let raw_result = unsafe { func(ptr_trun) };
-        let duration = t_start.elapsed();
 
-        // Create test result
+        // Execute post case handler - if any...
+        if (module.post_case_func.is_some()) {
+            module.post_case_func.as_ref().unwrap()(ptr_trun);
+        }
 
-        self.test_result.exec_duration = duration;
+        // Stop timer
+        self.test_result.exec_duration = t_start.elapsed();
 
+        // Create test result, note: DO NOT take the Context here - we do this in the module later on!
+        // mainly because some 'setters' are module-level setters while some getters are module level getters...
         CONTEXT.with_borrow_mut(|ctx| self.handle_result_from_ctx(ctx));
-        //self.test_result.result_class = Ok(TestResultClass::Pass);
         self.handle_test_return(raw_result);
         self.test_result.symbol = self.export.clone();
 
-        //
         self.test_result.print();
+
         self.change_state(State::Finished);
     }
 
-    fn execute_dependencies(&mut self, dynlib : &DynLibraryRef) {
+    fn execute_dependencies(&mut self, module : &Module, dynlib : &DynLibraryRef) {
         for func in &self.dependencies {
             if func.try_borrow().is_err() {
                 // circular dependency - we are probably already executing this - as we have a borrow on it while executing..
@@ -209,7 +232,7 @@ impl TestFunction {
             if !func.borrow().is_idle() {
                 continue;
             }
-            func.borrow_mut().execute(dynlib)
+            func.borrow_mut().execute(module, dynlib)
         }
     }
 

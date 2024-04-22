@@ -1,8 +1,10 @@
-use crate::test_runner::{AssertClass, AssertError};
+use crate::test_runner::{AssertClass, AssertError, CaseHandler, PrePostCaseHandler};
 
 pub struct Context {
     pub dependencies : Vec<CaseDependency>,
     pub assert_error : Option<AssertError>,
+    pub pre_case_handler : Option<PrePostCaseHandler>,
+    pub post_case_handler : Option<PrePostCaseHandler>,
 }
 pub struct CaseDependency {
     pub case : String,
@@ -14,6 +16,8 @@ impl Default for Context {
         Self {
             dependencies : Vec::new(),
             assert_error : None,
+            pre_case_handler : None,
+            post_case_handler : None,
         }
     }
 }
@@ -22,6 +26,8 @@ impl Context {
         Self {
             dependencies : Vec::new(),
             assert_error : None,
+            pre_case_handler : None,
+            post_case_handler : None,
         }
     }
     pub fn add_dependency(&mut self, case: &str, deplist: &str) {

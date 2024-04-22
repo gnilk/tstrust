@@ -7,8 +7,8 @@ pub struct Module {
     pub name : String,
     dynlib : DynLibraryRef,
     main_func : Option<TestFunctionRef>,
-    pre_case_func : Option<PrePostTestcaseFunction>,
-    post_case_func : Option<PrePostTestcaseFunction>,
+    pub pre_case_func : Option<PrePostCaseHandler>,
+    pub post_case_func : Option<PrePostCaseHandler>,
     pub test_cases : Vec<TestFunctionRef>,
 }
 
@@ -66,7 +66,7 @@ impl Module {
         return false;
     }
 
-    pub fn execute(&self) {
+    pub fn execute(&mut self) {
         // Execute main first, main can define various dependens plus pre/post functions
         self.execute_main();
 
@@ -79,21 +79,34 @@ impl Module {
         }
     }
     fn execute_test(&self, tc : &TestFunctionRef) {
+        if (self.pre_case_func.is_some()) {
+            //let mut trun_interface = TestRunnerInterface::new();
+            //let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
+            self.pre_case_func.as_ref().unwrap()(std::ptr::null_mut());
+        }
+        tc.borrow_mut().execute(self, &self.dynlib);
 
-        tc.borrow_mut().execute(&self.dynlib);
+        if (self.post_case_func.is_some()) {
+            self.post_case_func.as_ref().unwrap()(std::ptr::null_mut());
+        }
     }
 
-    fn execute_main(&self) {
+    fn execute_main(&mut self) {
         if !self.main_func.is_some() {
             return;
         }
 
 //        println!("Execute main!");
         let func = self.main_func.as_ref().unwrap();
-        func.borrow_mut().execute(&self.dynlib);
+        func.borrow_mut().execute(self, &self.dynlib);
 
         // Grab hold of the context and verify test-cases...
         let ctx = CONTEXT.take();
+
+        self.pre_case_func = ctx.pre_case_handler;
+        self.post_case_func = ctx.post_case_handler;
+
+        // handle dependencies
         if ctx.dependencies.is_empty() {
 //            println!("No dependencies");
             return;
