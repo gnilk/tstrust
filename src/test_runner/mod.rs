@@ -1,3 +1,6 @@
+//
+// Bring in modules for the test runners (as private)
+//
 mod dir_scanner;
 
 mod dyn_library;
@@ -11,9 +14,10 @@ mod context;
 mod config;
 mod singleton;
 
-pub use dir_scanner::DirScanner;
-pub use dyn_library::DynLibrary;
-pub use dyn_library::DynLibraryRef;
+// Now expose classes - this more or less will name-alias the classes into the test_runner namespace
+pub use dir_scanner::*;
+pub use dyn_library::*;
+pub use dyn_library::*;
 pub use test_interface::*;
 pub use module::*;
 pub use test_function::*;
@@ -22,5 +26,3 @@ pub use context::*;
 pub use config::*;
 pub use singleton::*;
 
-// pub use dir_scanner::*;
-//pub use dyn_library::*;
