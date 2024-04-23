@@ -1,13 +1,17 @@
 use std::collections::{HashMap};
-use crate::test_runner::{Config, Singleton, DynLibrary, Module, TestFunction, TestFunctionRef, TestScope, TestType, TestReturnCode, TestResult};
+use crate::test_runner::{Config, Singleton, DynLibrary, Module, TestFunction, TestFunctionRef, TestScope, TestType, TestReturnCode, TestResult, ResultSummary};
 
 pub struct TestRunner {
     library : DynLibrary,
     modules : HashMap<String, Module>,
     global_main : Option<TestFunctionRef>,
     global_exit : Option<TestFunctionRef>,
-    test_results : Vec<TestResult>,
+    tmp_results : Vec<TestResult>,
+    test_results : Vec<ResultSummary>,
 }
+
+
+
 impl TestRunner {
     pub fn new(filename : &str) -> TestRunner {
         let mut inst = TestRunner {
@@ -15,6 +19,7 @@ impl TestRunner {
             modules : HashMap::new(),
             global_main : None,
             global_exit : None,
+            tmp_results : Vec::new(),
             test_results : Vec::new(),
 
         };
@@ -190,13 +195,15 @@ impl TestRunner {
 
     }
 
+
     fn execute_library_main(&mut self) {
         match &self.global_main {
             None => (),
             Some(x) => {
                 if x.borrow().should_execute() {
                     x.borrow_mut().execute_no_module(&self.library);
-                    self.test_results.push(x.borrow().test_result.clone());
+                    // FIXME should NOT push to tmp - but we have no 'module' for global
+                    self.tmp_results.push(x.borrow().test_result.clone());
                 }
             }
         }
@@ -208,7 +215,8 @@ impl TestRunner {
             Some(x) => {
                 if x.borrow().should_execute() {
                     x.borrow_mut().execute_no_module(&self.library);
-                    self.test_results.push(x.borrow().test_result.clone());
+                    // FIXME should NOT push to tmp - but we have no 'module' for global
+                    self.tmp_results.push(x.borrow().test_result.clone());
                 }
             }
         }
@@ -220,7 +228,8 @@ impl TestRunner {
             Some(x) => {
                 if x.borrow().should_execute() {
                     x.borrow_mut().execute_no_module(&self.library);
-                    self.test_results.push(x.borrow().test_result.clone());
+                    // FIXME should NOT push to tmp - but we have no 'module' for global
+                    self.tmp_results.push(x.borrow().test_result.clone());
                 }
             }
         }
@@ -239,8 +248,10 @@ impl TestRunner {
             module.execute(&self.library);
 
             // Gather and append results...
-            let mut results = module.gather_test_results();
-            self.test_results.append(&mut results);
+            let results = ResultSummary::new(&module);
+//            self.test_results.append()
+//            let mut results = module.gather_test_results();
+            self.test_results.push(results);
 
 
         };
@@ -256,28 +267,23 @@ impl TestRunner {
     }
 
     pub fn print_results(&self) {
-        let mut num_passed = 0;
         let mut num_failed = 0;
         let mut num_executed = 0;
 
 
         for r in &self.test_results {
             // We only gather number of executed
-            num_executed += 1;
-
-            if r.did_pass() {
-                num_passed += 1;
-            } else {
-                num_failed += 1;
-            }
+            num_executed += r.tests_executed;
+            num_failed += r.tests_failed;
         } // for
+
         println!("Tests Executed: {}", num_executed);
         println!("Tests Failed..: {}", num_failed);
 
-        println!("Failed:");
-        for r in &self.test_results {
-            if r.did_fail() {
-                r.print_failure();
+        if num_failed > 0 {
+            println!("Failed:");
+            for r in &self.test_results {
+                r.print_failures();
             }
         }
 

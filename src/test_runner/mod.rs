@@ -15,6 +15,7 @@ mod config;
 mod singleton;
 mod test_runner;
 mod test_result;
+mod results_summary;
 
 // Now expose classes - this more or less will name-alias the classes into the test_runner namespace
 pub use dir_scanner::*;
@@ -28,4 +29,5 @@ pub use config::*;
 pub use singleton::*;
 pub use test_runner::*;
 pub use test_result::*;
+pub use results_summary::*;
 
