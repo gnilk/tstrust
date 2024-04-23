@@ -3,11 +3,11 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::rc::Rc;
 use std::time::Instant;
-use crate::test_runner::{Config, Singleton, DynLibraryRef, Module, ModuleRef, TestFunction, TestFunctionRef, TestScope, TestType};
+use crate::test_runner::{Config, Singleton, DynLibraryRef, Module, TestFunction, TestFunctionRef, TestScope, TestType};
 
 pub struct TestRunner {
     library : DynLibraryRef,
-    modules : HashMap<String, ModuleRef>,
+    modules : HashMap<String, Module>,
     global_main : Option<TestFunctionRef>,
     global_exit : Option<TestFunctionRef>,
 }
@@ -51,15 +51,15 @@ impl TestRunner {
                 },
                 TestScope::Module => {
                     if !self.modules.contains_key(&func.borrow().module_name) {
-                        let m = Rc::new(RefCell::new(Module::new(&func.borrow().module_name)));
+                        let m = Module::new(&func.borrow().module_name);
                         self.modules.insert(func.borrow().module_name.to_string(),m);
                     }
-                    let m = self.modules.get(&func.borrow().module_name).expect("get");
+                    let m = self.modules.get_mut(&func.borrow().module_name).expect("get");
 
                     match func.borrow().test_type {
-                        TestType::Main => m.borrow_mut().main_func = Some(func.clone()),
-                        TestType::Exit => m.borrow_mut().exit_func = Some(func.clone()),
-                        _ => m.borrow_mut().test_cases.push(func.clone()),
+                        TestType::Main => m.main_func = Some(func.clone()),
+                        TestType::Exit => m.exit_func = Some(func.clone()),
+                        _ => m.test_cases.push(func.clone()),
                     }; // match test_type
                 },
             }; // match test_scope
@@ -89,14 +89,14 @@ impl TestRunner {
         }
         for (name, module) in &self.modules {
 
-            let module_exec = module.borrow().should_execute();
+            let module_exec = module.should_execute();
             println!("{} Module: {}", self.module_exec_prefix(module), &name);
 
             // Move main/exit out of here...
-            if module.borrow().main_func.is_some() {
+            if module.main_func.is_some() {
                 // Need to clone here - also I really start to dislike working with references...
                 // it would be nice with some shared pointers..
-                let main_func = module.borrow().main_func.as_ref().unwrap().clone();
+                let main_func = module.main_func.as_ref().unwrap().clone();
                 println!("  {}{} {}::{} ({})",
                          self.func_exec_prefix(&main_func, module_exec),
                          self.func_qualifier(&main_func),
@@ -107,10 +107,10 @@ impl TestRunner {
             }
 
 
-            if module.borrow().exit_func.is_some() {
+            if module.exit_func.is_some() {
                 // Need to clone here - also I really start to dislike working with references...
                 // it would be nice with some shared pointers..
-                let exit_func = module.borrow().exit_func.as_ref().unwrap().clone();
+                let exit_func = module.exit_func.as_ref().unwrap().clone();
                 println!("  {}{} {}::{} ({})",
                          self.func_exec_prefix(&exit_func, module_exec),
                          self.func_qualifier(&exit_func),
@@ -121,7 +121,7 @@ impl TestRunner {
             }
 
 
-            for func in &module.borrow().test_cases {
+            for func in &module.test_cases {
                 println!("  {}  {}::{} ({})",
                          self.func_exec_prefix(func, module_exec),
                          &name,
@@ -130,8 +130,8 @@ impl TestRunner {
             }
         }
     }
-    fn module_exec_prefix(&self, module : &ModuleRef) -> &str {
-        if module.borrow().should_execute() {
+    fn module_exec_prefix(&self, module : &Module) -> &str {
+        if module.should_execute() {
             return "*"
         }
         return "-"
@@ -173,19 +173,19 @@ impl TestRunner {
     //
     // Execution
     //
-    pub fn execute_tests(&self) {
+    pub fn execute_tests(&mut self) {
 
         let t_start = Instant::now();
 
         self.execute_global_main();
 
-        // put this for-loop in a wrapper function?
-        for (name, module) in &self.modules {
-            if !module.borrow().should_execute() {
+        for (_, module) in self.modules.iter_mut() {
+            if !module.should_execute() {
                 continue;
             }
-            self.execute_module_tests(module);
-        }
+            module.execute(&self.library);
+        };
+
 
         self.execute_global_exit();
         let duration = t_start.elapsed();
@@ -217,16 +217,16 @@ impl TestRunner {
         }
     }
 
-    fn execute_module_tests(&self, module : &ModuleRef) {
+    fn execute_module_tests(&self, module : &mut Module) {
         // Done twice now...
-        if !module.borrow().should_execute() {
+        if !module.should_execute() {
             return;
         }
-        module.borrow_mut().execute(&self.library);
+        module.execute(&self.library);
         //self.execute_module_main(module);
 
     }
-    fn execute_module_main(&self, module : &ModuleRef) {
+    fn execute_module_main(&self, module : &Module) {
         // match &module.borrow().main_func {
         //     None => (),
         //     Some(x) => {

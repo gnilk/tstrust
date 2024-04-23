@@ -9,8 +9,6 @@ use std::string::ToString;
 // Bring in everything - this is just our way to split things...
 use tstrust::test_runner::*;
 
-
-
 //
 // well - main...
 //
@@ -34,14 +32,12 @@ fn main() {
 
 
 struct App {
-    modules_to_test : HashMap<String, ModuleRef>,
     runners : Vec<TestRunner>,
 }
 impl App {
 
     pub fn new<'a>() -> App {
         let instance = App {
-            modules_to_test : HashMap::new(),
             runners : Vec::new(),
         };
         return instance;
@@ -80,20 +76,6 @@ impl App {
         let mut tr = TestRunner::new(&library);
         tr.prescan();
         self.runners.push(tr);
-
-
-/*
-        let modules = modules_from_dynlib(&library);
-        for (name, module) in modules.into_iter() {
-            // I don't like the fact that this must be unsafe.. really need to consider putting this in a context object..
-
-            if !self.modules_to_test.contains_key(&name) {
-                // Don't want clone here...
-                self.modules_to_test.insert(name, module);
-            }
-        }
-
- */
     }
     fn list_tests(&self) {
         for runner in &self.runners {
@@ -102,69 +84,10 @@ impl App {
     }
 
     fn execute_tests(&mut self) {
-        for runner in &self.runners {
+        for runner in &mut self.runners {
             runner.execute_tests();
         }
     }
 
-
-    fn list_tests_old(&self) {
-        for (_, module) in &self.modules_to_test {
-            match module.borrow().should_execute() {
-                true => print!("*"),
-                false=> print!("-"),
-            }
-            println!(" Module: {}",module.borrow().name);
-            for tc in &module.borrow().test_cases {
-                print!("  "); // indent
-                match module.borrow().should_execute() && tc.borrow().should_execute() {
-                    true => print!("*"),
-                    false => print!("-"),
-                }
-                println!("  {}::{} ({})", module.borrow().name, tc.borrow().case_name, tc.borrow().symbol);
-            }
-        }
-    }
-
-
-    fn execute_tests_old(&mut self, library : &DynLibraryRef) {
-
-
-
-        for (_, module) in &self.modules_to_test {
-            if !module.borrow().should_execute() {
-                continue;
-            }
-            println!(" Module: {}",module.borrow().name);
-            module.borrow_mut().execute(library);
-        }
-    }
-
-
 }
 
-//
-// helper
-//
-
-fn modules_from_dynlib(dynlibref: &DynLibraryRef) -> HashMap<String, ModuleRef> {
-    let dynlib = dynlibref.borrow();
-    let module_names: Vec<&str> = dynlib.exports
-        .iter()
-        .map(|e| e.split('_').nth(1).unwrap())
-        .collect();
-
-    let mut module_map: HashMap<String, ModuleRef> = HashMap::new();
-
-    // I've struggled to turn this into a filter/map chain..  didn't get it to work...
-    for m in module_names {
-        if module_map.contains_key(m) {
-            continue;
-        }
-        let module = Rc::new(RefCell::new(Module::new(m)));
-        module.borrow_mut().find_test_cases(dynlibref, module.clone());
-        module_map.insert(m.to_string(), module.clone());
-    }
-
-    return module_map;
-}

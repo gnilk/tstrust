@@ -14,10 +14,6 @@ pub struct Module {
     pub test_cases : Vec<TestFunctionRef>,
 }
 
-//pub type ModuleRef = Rc<RefCell<<Module>>;
-pub type ModuleRef = Rc<RefCell<Module>>;
-
-
 impl Module {
     //pub fn new<'a>(name : &'a str, dyn_library: &'a DynLibrary) -> Module<'a> {
     //pub fn new(name : &str, dyn_library: &DynLibraryRef) -> Module {
@@ -33,33 +29,6 @@ impl Module {
 
         return module;
     }
-
-    pub fn find_test_cases(&mut self, dynlib : &DynLibraryRef, module : ModuleRef) {
-        // println!("parsing testcase, module={}", self.name);
-        for e in &dynlib.borrow().exports {
-            let parts:Vec<&str> = e.split('_').collect();
-            if parts.len() < 2 {
-                panic!("Invalid export={} in dynlib={}",e,dynlib.borrow().name);
-            }
-            // Skip everything not belonging to us..
-            if parts[1] != self.name {
-                continue;
-            }
-
-            // special handling for 'test_<module>' => CaseType::ModuleMain
-            if (parts.len() == 2) && (parts[1] == self.name) {
-                // println!("  main, func={},  export={}", parts[1], e);
-                self.main_func = Some(TestFunction::new(e, "-", &parts[1]));
-                //self.test_cases.push(TestFunction::new(parts[1], CaseType::ModuleMain, e.to_string()));
-            } else {
-                // join the case name together again...
-                let case_name = parts[2..].join("_");
-                // println!("  case, func={},  export={}", case_name, e);
-                self.test_cases.push(TestFunction::new(e, &parts[2], &case_name));
-            }
-        }
-    }
-
 
     pub fn should_execute(&self) -> bool {
         let cfg = Config::instance();
