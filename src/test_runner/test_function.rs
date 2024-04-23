@@ -218,6 +218,7 @@ impl TestFunction {
         return trun_interface;
     }
 
+
     // FIXME: Should return result<>
     pub fn execute(&mut self, module : &Module, dynlib : &DynLibrary) {
         match self.state {
@@ -234,8 +235,18 @@ impl TestFunction {
         // Start the timer - do NOT include 'dependencies' in the timing - they are just a way of controlling execution
         let t_start = Instant::now();
 
-        // Create the test runner interface...
 
+        // FIXME: Threading - I need to define a struct which holds all data going back and forth to the thread
+        //        1) trun_interface (I can move the whole creation to this struct)
+        //        2) Symbol<TestableFunction>, need to grab this from dynlibrary
+        //        3) 'Context'  -> needs to be set to thread_local!  - (do this first, and see if it works - there are probably better ways!)
+        //        4)  pre/post_case_func might also be a good idea - as these can do stuff..
+        //
+        // Once done we need to figure out a way to terminate the thread...
+        //
+
+
+        // Create the test runner interface...
         let mut trun_interface = self.get_truninterface_ptr(); //TestRunnerInterface::new();
 
         // And the context..
