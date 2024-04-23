@@ -6,7 +6,7 @@ pub struct TestRunner {
     modules : HashMap<String, Module>,
     global_main : Option<TestFunctionRef>,
     global_exit : Option<TestFunctionRef>,
-    tmp_results : Vec<TestResult>,
+    global_results : ResultSummary,
     test_results : Vec<ResultSummary>,
 }
 
@@ -19,7 +19,7 @@ impl TestRunner {
             modules : HashMap::new(),
             global_main : None,
             global_exit : None,
-            tmp_results : Vec::new(),
+            global_results : ResultSummary::new("-"),       // special 'global' name
             test_results : Vec::new(),
 
         };
@@ -187,23 +187,24 @@ impl TestRunner {
         self.execute_all_modules();
         self.execute_library_exit();
 
-        // Can't do this???  - something with mutable and borrows that simply don't play nice with me...
-        //self.execute_libraray_opt_func(&self.global_exit);
-
+        // Merge results
+        self.test_results.push(self.global_results.clone());
 
         println!("<--- Start Library  \t{}", self.library.name);
 
+
     }
 
-
+    //
+    // I would rather have a single function doing this like 'execute_opt_func(&mut self, &Option<TestFunctionRef>)'
+    //
     fn execute_library_main(&mut self) {
         match &self.global_main {
             None => (),
             Some(x) => {
                 if x.borrow().should_execute() {
                     x.borrow_mut().execute_no_module(&self.library);
-                    // FIXME should NOT push to tmp - but we have no 'module' for global
-                    self.tmp_results.push(x.borrow().test_result.clone());
+                    self.global_results.add_test_result(&x.borrow().test_result);
                 }
             }
         }
@@ -215,21 +216,7 @@ impl TestRunner {
             Some(x) => {
                 if x.borrow().should_execute() {
                     x.borrow_mut().execute_no_module(&self.library);
-                    // FIXME should NOT push to tmp - but we have no 'module' for global
-                    self.tmp_results.push(x.borrow().test_result.clone());
-                }
-            }
-        }
-    }
-
-    fn execute_libraray_opt_func(&mut self, opt_func : &Option<TestFunctionRef>) {
-        match opt_func {
-            None => (),
-            Some(x) => {
-                if x.borrow().should_execute() {
-                    x.borrow_mut().execute_no_module(&self.library);
-                    // FIXME should NOT push to tmp - but we have no 'module' for global
-                    self.tmp_results.push(x.borrow().test_result.clone());
+                    self.global_results.add_test_result(&x.borrow().test_result);
                 }
             }
         }
@@ -248,9 +235,7 @@ impl TestRunner {
             module.execute(&self.library);
 
             // Gather and append results...
-            let results = ResultSummary::new(&module);
-//            self.test_results.append()
-//            let mut results = module.gather_test_results();
+            let results = ResultSummary::from_module(&module);
             self.test_results.push(results);
 
 
