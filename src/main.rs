@@ -21,9 +21,10 @@ fn main() {
     // Putting stuff in an 'app' instance - this 'solves' global variable problems..
     // Tried having a 'context' but was constantly battling life-time handling - this made it much easier...
     let mut app = App::new();
-    app.scan_libraries(&cfg.inputs);
+    let runner = app.scan_libraries(&cfg.inputs);
+
     if cfg.list_tests {
-        app.list_tests();
+        // app.list_tests();
     }
     if cfg.execute_tests {
         app.execute_tests();
@@ -34,12 +35,14 @@ fn main() {
 
 struct App {
     modules_to_test : HashMap<String, ModuleRef>,
+    runners : Vec<TestRunner>,
 }
 impl App {
 
     pub fn new<'a>() -> App {
         let instance = App {
             modules_to_test : HashMap::new(),
+            runners : Vec::new(),
         };
         return instance;
     }
@@ -76,7 +79,8 @@ impl App {
         // TEST TEST
         let mut tr = TestRunner::new(&library);
         tr.prescan();
-        tr.dump();
+        self.runners.push(tr);
+
 
 /*
         let modules = modules_from_dynlib(&library);
@@ -91,8 +95,20 @@ impl App {
 
  */
     }
-
     fn list_tests(&self) {
+        for runner in &self.runners {
+            runner.dump();
+        }
+    }
+
+    fn execute_tests(&mut self) {
+        for runner in &self.runners {
+            runner.execute_tests();
+        }
+    }
+
+
+    fn list_tests_old(&self) {
         for (_, module) in &self.modules_to_test {
             match module.borrow().should_execute() {
                 true => print!("*"),
@@ -110,7 +126,8 @@ impl App {
         }
     }
 
-    fn execute_tests(&mut self) {
+
+    fn execute_tests_old(&mut self, library : &DynLibraryRef) {
 
 
 
@@ -119,7 +136,7 @@ impl App {
                 continue;
             }
             println!(" Module: {}",module.borrow().name);
-            module.borrow_mut().execute();
+            module.borrow_mut().execute(library);
         }
     }
 
@@ -144,8 +161,8 @@ fn modules_from_dynlib(dynlibref: &DynLibraryRef) -> HashMap<String, ModuleRef> 
         if module_map.contains_key(m) {
             continue;
         }
-        let module = Rc::new(RefCell::new(Module::new(m, dynlibref)));
-        module.borrow_mut().find_test_cases(module.clone());
+        let module = Rc::new(RefCell::new(Module::new(m)));
+        module.borrow_mut().find_test_cases(dynlibref, module.clone());
         module_map.insert(m.to_string(), module.clone());
     }
 

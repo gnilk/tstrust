@@ -210,6 +210,51 @@ impl TestFunction {
         return self.is_global() && (self.case_name == Config::instance().exit_func_name);
     }
 
+    pub fn execute_no_module(&mut self, dynlib : &DynLibraryRef) {
+        match self.state {
+            State::Idle => (),
+            _ => return,
+        }
+        self.change_state(State::Executing);
+
+        // Spawn thread here, need to figure out what happens with the Context (since it is a thread-local) variable
+        println!("=== RUN \t{}",self.symbol);
+
+        // Start the timer - do NOT include 'dependencies' in the timing - they are just a way of controlling execution
+        let t_start = Instant::now();
+
+        // Create the test runner interface...
+        let mut trun_interface = TestRunnerInterface::new();
+        trun_interface.case_depends = Some(dependency_handler);
+        trun_interface.assert_error = Some(assert_error_handler);
+        trun_interface.set_pre_case_callback = Some(set_pre_case_handler);
+        trun_interface.set_post_case_callback = Some(set_post_case_handler);
+        let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
+
+        // And the context..
+        CONTEXT.set(Context::new());
+
+
+        // Look up the symbol and exeecute
+        let lib = dynlib.borrow();
+        let func = lib.get_testable_function(&self.symbol);
+        let raw_result = unsafe { func(ptr_trun) };
+
+        // Stop timer
+        self.test_result.exec_duration = t_start.elapsed();
+
+        // Create test result, note: DO NOT take the Context here - we do this in the module later on!
+        // mainly because some 'setters' are module-level setters while some getters are module level getters...
+        CONTEXT.with_borrow_mut(|ctx| self.handle_result_from_ctx(ctx));
+        self.handle_test_return(raw_result);
+        self.test_result.symbol = self.symbol.clone();
+
+        self.test_result.print();
+
+        self.change_state(State::Finished);
+
+
+    }
 
     // FIXME: Should return result<>
     pub fn execute(&mut self, module : &Module, dynlib : &DynLibraryRef) {

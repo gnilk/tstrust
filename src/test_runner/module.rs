@@ -5,7 +5,7 @@ use crate::test_runner::*;
 #[derive(Debug)]
 pub struct Module {
     pub name : String,
-    dynlib : DynLibraryRef,
+//    dynlib : DynLibraryRef,
     pub pre_case_func : Option<PrePostCaseHandler>,
     pub post_case_func : Option<PrePostCaseHandler>,
 
@@ -20,10 +20,10 @@ pub type ModuleRef = Rc<RefCell<Module>>;
 
 impl Module {
     //pub fn new<'a>(name : &'a str, dyn_library: &'a DynLibrary) -> Module<'a> {
-    pub fn new(name : &str, dyn_library: &DynLibraryRef) -> Module {
+    //pub fn new(name : &str, dyn_library: &DynLibraryRef) -> Module {
+    pub fn new(name : &str) -> Module {
         let module = Module {
             name : name.to_string(),
-            dynlib : dyn_library.clone(),
             main_func : None,
             exit_func : None,
             post_case_func : None,
@@ -34,12 +34,12 @@ impl Module {
         return module;
     }
 
-    pub fn find_test_cases(&mut self, module : ModuleRef) {
+    pub fn find_test_cases(&mut self, dynlib : &DynLibraryRef, module : ModuleRef) {
         // println!("parsing testcase, module={}", self.name);
-        for e in &self.dynlib.borrow().exports {
+        for e in &dynlib.borrow().exports {
             let parts:Vec<&str> = e.split('_').collect();
             if parts.len() < 2 {
-                panic!("Invalid export={} in dynlib={}",e,self.dynlib.borrow().name);
+                panic!("Invalid export={} in dynlib={}",e,dynlib.borrow().name);
             }
             // Skip everything not belonging to us..
             if parts[1] != self.name {
@@ -69,39 +69,41 @@ impl Module {
         return false;
     }
 
-    pub fn execute(&mut self) {
+    pub fn execute(&mut self, dynlib : &DynLibraryRef) {
         // Execute main first, main can define various dependens plus pre/post functions
-        self.execute_main();
+        self.execute_main(dynlib);
 
         // Execute actual test cases
         for tc in &self.test_cases {
             if !tc.borrow().should_execute() {
                 continue;
             }
-            self.execute_test(tc);
+            self.execute_test(tc,dynlib);
         }
+
+        self.execute_exit(dynlib);
     }
-    fn execute_test(&self, tc : &TestFunctionRef) {
+    fn execute_test(&self, tc : &TestFunctionRef, dynlib : &DynLibraryRef) {
         if (self.pre_case_func.is_some()) {
             //let mut trun_interface = TestRunnerInterface::new();
             //let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
             self.pre_case_func.as_ref().unwrap()(std::ptr::null_mut());
         }
-        tc.borrow_mut().execute(self, &self.dynlib);
+        tc.borrow_mut().execute(self, dynlib);
 
         if (self.post_case_func.is_some()) {
             self.post_case_func.as_ref().unwrap()(std::ptr::null_mut());
         }
     }
 
-    fn execute_main(&mut self) {
+    fn execute_main(&mut self, dynlib : &DynLibraryRef) {
         if !self.main_func.is_some() {
             return;
         }
 
 //        println!("Execute main!");
         let func = self.main_func.as_ref().unwrap();
-        func.borrow_mut().execute(self, &self.dynlib);
+        func.borrow_mut().execute(self, dynlib);
 
         // Grab hold of the context and verify test-cases...
         let ctx = CONTEXT.take();
@@ -129,6 +131,20 @@ impl Module {
         }
     }
 
+
+    fn execute_exit(&mut self, dynlib : &DynLibraryRef) {
+        if !self.exit_func.is_some() {
+            return;
+        }
+
+        let func = self.exit_func.as_ref().unwrap();
+        func.borrow_mut().execute(self, dynlib);
+
+        // Grab hold of the context and verify test-cases...
+        CONTEXT.take();
+    }
+
+
     fn get_test_case(&self, case : &str) -> Result<&TestFunctionRef, ()> {
         for tc in &self.test_cases {
             if tc.borrow().case_name == case {
@@ -138,13 +154,4 @@ impl Module {
         return Err(());
     }
 
-    pub fn dump(&self) {
-        // Smarter way to filter??
-        let lib = self.dynlib.borrow();
-        let dummy : Vec<&String> = lib.exports.iter().filter(|x| x.contains("casefilter")).collect();
-
-        for d in dummy {
-            println!("{}", d);
-        }
-    }
 }

@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 use std::rc::Rc;
+use std::time::Instant;
 use crate::test_runner::{Config, Singleton, DynLibraryRef, Module, ModuleRef, TestFunction, TestFunctionRef, TestScope, TestType};
 
 pub struct TestRunner {
@@ -18,7 +20,6 @@ impl TestRunner {
             global_exit : None,
         }
     }
-
 
 
     pub fn prescan(&mut self) {
@@ -50,7 +51,7 @@ impl TestRunner {
                 },
                 TestScope::Module => {
                     if !self.modules.contains_key(&func.borrow().module_name) {
-                        let m = Rc::new(RefCell::new(Module::new(&func.borrow().module_name, &self.library)));
+                        let m = Rc::new(RefCell::new(Module::new(&func.borrow().module_name)));
                         self.modules.insert(func.borrow().module_name.to_string(),m);
                     }
                     let m = self.modules.get(&func.borrow().module_name).expect("get");
@@ -149,6 +150,10 @@ impl TestRunner {
         }
     }
 
+    //
+    // Creates a test function from an export symbol...
+    // This could perhaps be baked into 'new' for TestFunctionRef - but won't do that until this whole thing can replace the current execution path...
+    //
     fn create_test_function(symbol : &str) -> Result<TestFunctionRef,()> {
         let parts:Vec<String> = symbol.split('_').map(|x| x.to_string()).collect();
 
@@ -165,6 +170,71 @@ impl TestRunner {
 
         return Ok(func);
     }
+    //
+    // Execution
+    //
+    pub fn execute_tests(&self) {
 
+        let t_start = Instant::now();
+
+        self.execute_global_main();
+
+        // put this for-loop in a wrapper function?
+        for (name, module) in &self.modules {
+            if !module.borrow().should_execute() {
+                continue;
+            }
+            self.execute_module_tests(module);
+        }
+
+        self.execute_global_exit();
+        let duration = t_start.elapsed();
+
+        println!("-------------------");
+        println!("Duration......: {} sec", duration.as_secs_f32());
+
+    }
+
+    fn execute_global_main(&self) {
+        match &self.global_main {
+            None => (),
+            Some(x) => {
+                if x.borrow().should_execute() {
+                    x.borrow_mut().execute_no_module(&self.library);
+                }
+            }
+        }
+    }
+
+    fn execute_global_exit(&self) {
+        match &self.global_exit {
+            None => (),
+            Some(x) => {
+                if x.borrow().should_execute() {
+                    x.borrow_mut().execute_no_module(&self.library);
+                }
+            }
+        }
+    }
+
+    fn execute_module_tests(&self, module : &ModuleRef) {
+        // Done twice now...
+        if !module.borrow().should_execute() {
+            return;
+        }
+        module.borrow_mut().execute(&self.library);
+        //self.execute_module_main(module);
+
+    }
+    fn execute_module_main(&self, module : &ModuleRef) {
+        // match &module.borrow().main_func {
+        //     None => (),
+        //     Some(x) => {
+        //         if x.borrow().should_execute() {
+        //             x.borrow_mut().execute(module.borrow().clone(), &self.library);
+        //         }
+        //     }
+        // }
+    }
 
 }
