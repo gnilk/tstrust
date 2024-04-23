@@ -1,5 +1,5 @@
 use std::collections::{HashMap};
-use crate::test_runner::{Config, Singleton, DynLibrary, Module, TestFunction, TestFunctionRef, TestScope, TestType, TestReturnCode, TestResult, ResultSummary};
+use crate::test_runner::{Config, Singleton, DynLibrary, Module, TestFunction, TestFunctionRef, TestScope, TestType, ResultSummary};
 
 pub struct TestRunner {
     library : DynLibrary,
@@ -191,8 +191,6 @@ impl TestRunner {
         self.test_results.push(self.global_results.clone());
 
         println!("<--- Start Library  \t{}", self.library.name);
-
-
     }
 
     //
@@ -240,15 +238,6 @@ impl TestRunner {
 
 
         };
-    }
-
-    fn execute_module_tests(&mut self, module : &mut Module) {
-        // Done twice now...
-        if !module.should_execute() {
-            return;
-        }
-        module.execute(&self.library);
-        //self.execute_module_main(module);
     }
 
     pub fn print_results(&self) {

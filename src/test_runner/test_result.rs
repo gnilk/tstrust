@@ -91,7 +91,7 @@ impl TestResult {
                 TestReturnCode::FailModule => {
                     println!("  [tMa]: {}", self.symbol);
                 },
-                TestReturnCode::Fail => {
+                TestReturnCode::FailAll => {
                     println!("  [tmA]: {}", self.symbol);
                 },
                 _ => (),

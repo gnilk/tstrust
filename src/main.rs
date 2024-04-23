@@ -1,10 +1,5 @@
 use std::{env};
-use std::cell::{RefCell};
-
-use std::rc::Rc;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::string::ToString;
 use std::time::Instant;
 
 // Bring in everything - this is just our way to split things...
@@ -20,10 +15,10 @@ fn main() {
     // Putting stuff in an 'app' instance - this 'solves' global variable problems..
     // Tried having a 'context' but was constantly battling life-time handling - this made it much easier...
     let mut app = App::new();
-    let runner = app.scan_libraries(&cfg.inputs);
+    app.scan_libraries(&cfg.inputs);
 
     if cfg.list_tests {
-        // app.list_tests();
+        app.list_tests();
     }
     if cfg.execute_tests {
         app.execute_tests();
