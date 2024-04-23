@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use libloading::Symbol;
 use crate::test_runner::*;
 
 // Testable function
@@ -35,7 +34,6 @@ pub struct TestFunction {
     pub test_type: TestType,
 
     state : State,
-    executed : bool,    // state?
     pub dependencies : Vec<TestFunctionRef>,
     test_result: TestResult,
 }
@@ -134,7 +132,7 @@ impl TestFunction {
             // global main is: 'test_main'
             test_type = TestType::Main;
             test_scope = TestScope::Global;
-        } else if (module == "-" && (case == Config::instance().exit_func_name)) {
+        } else if module == "-" && (case == Config::instance().exit_func_name) {
             // global exit is: 'test_exit'
             test_type = TestType::Exit;
             test_scope = TestScope::Global;
@@ -158,8 +156,6 @@ impl TestFunction {
             test_type,
 
             state : State::Idle,
-            //module : module,
-            executed : false,
             dependencies : Vec::new(),
             test_result : TestResult::new(),
         };
@@ -210,7 +206,7 @@ impl TestFunction {
         return self.is_global() && (self.case_name == Config::instance().exit_func_name);
     }
 
-    pub fn execute_no_module(&mut self, dynlib : &DynLibraryRef) {
+    pub fn execute_no_module(&mut self, dynlib : &DynLibrary) {
         match self.state {
             State::Idle => (),
             _ => return,
@@ -230,8 +226,8 @@ impl TestFunction {
         CONTEXT.set(Context::new());
 
         // Look up the symbol and exeecute
-        let lib = dynlib.borrow();
-        let func = lib.get_testable_function(&self.symbol);
+        //let lib = dynlib.borrow();
+        let func = dynlib.get_testable_function(&self.symbol);
         let raw_result = unsafe { func(&mut trun_interface) };
 
         // Stop timer
@@ -258,7 +254,7 @@ impl TestFunction {
     }
 
     // FIXME: Should return result<>
-    pub fn execute(&mut self, module : &Module, dynlib : &DynLibraryRef) {
+    pub fn execute(&mut self, module : &Module, dynlib : &DynLibrary) {
         match self.state {
             State::Idle => (),
             _ => return,
@@ -284,17 +280,17 @@ impl TestFunction {
         // Note: We do this here - as we align to the existing C/C++ test runner
         //       otherwise we could simply run in the module it-self (which might have been more prudent)
         // Execute pre case handler - if any has been assigned
-        if (module.pre_case_func.is_some()) {
+        if module.pre_case_func.is_some() {
             module.pre_case_func.as_ref().unwrap()(&mut trun_interface);
         }
 
         // Look up the symbol and exeecute
-        let lib = dynlib.borrow();
-        let func = lib.get_testable_function(&self.symbol);
+        //let lib = dynlib.borrow();
+        let func = dynlib.get_testable_function(&self.symbol);
         let raw_result = unsafe { func(&mut trun_interface) };
 
         // Execute post case handler - if any...
-        if (module.post_case_func.is_some()) {
+        if module.post_case_func.is_some() {
             module.post_case_func.as_ref().unwrap()(&mut trun_interface);
         }
 
@@ -312,7 +308,7 @@ impl TestFunction {
         self.change_state(State::Finished);
     }
 
-    fn execute_dependencies(&mut self, module : &Module, dynlib : &DynLibraryRef) {
+    fn execute_dependencies(&mut self, module : &Module, dynlib : &DynLibrary) {
         for func in &self.dependencies {
             if func.try_borrow().is_err() {
                 // circular dependency - we are probably already executing this - as we have a borrow on it while executing..

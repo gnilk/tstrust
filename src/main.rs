@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::string::ToString;
+use std::time::Instant;
 
 // Bring in everything - this is just our way to split things...
 use tstrust::test_runner::*;
@@ -70,11 +71,8 @@ impl App {
         }
     }
     fn scan_library(&mut self, filename: &str) {
-        let library = Rc::new(DynLibrary::new(filename));
-
         // TEST TEST
-        let mut tr = TestRunner::new(&library);
-        tr.prescan();
+        let tr = TestRunner::new(filename);
         self.runners.push(tr);
     }
     fn list_tests(&self) {
@@ -84,9 +82,20 @@ impl App {
     }
 
     fn execute_tests(&mut self) {
+        let t_start = Instant::now();
+
+        println!("--> Start Global");
         for runner in &mut self.runners {
             runner.execute_tests();
         }
+        println!("<-- End Global");
+
+        let duration = t_start.elapsed();
+
+        println!("");
+        println!("-------------------");
+        println!("Duration......: {} sec", duration.as_secs_f32());
+
     }
 
 }

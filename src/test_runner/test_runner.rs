@@ -1,32 +1,31 @@
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
-use std::time::Instant;
-use crate::test_runner::{Config, Singleton, DynLibraryRef, Module, TestFunction, TestFunctionRef, TestScope, TestType};
+use std::collections::{HashMap};
+use crate::test_runner::{Config, Singleton, DynLibrary, Module, TestFunction, TestFunctionRef, TestScope, TestType};
 
 pub struct TestRunner {
-    library : DynLibraryRef,
+    library : DynLibrary,
     modules : HashMap<String, Module>,
     global_main : Option<TestFunctionRef>,
     global_exit : Option<TestFunctionRef>,
 }
 impl TestRunner {
-    pub fn new(library: &DynLibraryRef) -> TestRunner {
-        Self {
-            library : library.clone(),
+    pub fn new(filename : &str) -> TestRunner {
+        let mut inst = TestRunner {
+            library : DynLibrary::new(filename),
             modules : HashMap::new(),
             global_main : None,
             global_exit : None,
-        }
+
+        };
+        inst.prescan();
+        return inst;
     }
 
 
-    pub fn prescan(&mut self) {
+    fn prescan(&mut self) {
         // FIXME: Implement
         //let lib = self.library.borrow_mut();
-        let lib = self.library.borrow();
-        for x in &lib.exports {
+        //let lib = self.library.borrow();
+        for x in &self.library.exports {
             let res = Self::create_test_function(x);
             if res.is_err() {
                 continue;
@@ -175,21 +174,17 @@ impl TestRunner {
     //
     pub fn execute_tests(&mut self) {
 
-        let t_start = Instant::now();
+        println!("---> Start Library  \t{}", self.library.name);
 
-        self.execute_global_main();
-
+        self.execute_library_main();
         self.execute_all_modules();
+        self.execute_library_exit();
 
-        self.execute_global_exit();
-        let duration = t_start.elapsed();
-
-        println!("-------------------");
-        println!("Duration......: {} sec", duration.as_secs_f32());
+        println!("<--- Start Library  \t{}", self.library.name);
 
     }
 
-    fn execute_global_main(&self) {
+    fn execute_library_main(&self) {
         match &self.global_main {
             None => (),
             Some(x) => {
@@ -200,7 +195,7 @@ impl TestRunner {
         }
     }
 
-    fn execute_global_exit(&self) {
+    fn execute_library_exit(&self) {
         match &self.global_exit {
             None => (),
             Some(x) => {
@@ -234,16 +229,5 @@ impl TestRunner {
         //self.execute_module_main(module);
     }
 
-
-    fn execute_module_main(&self, module : &Module) {
-        // match &module.borrow().main_func {
-        //     None => (),
-        //     Some(x) => {
-        //         if x.borrow().should_execute() {
-        //             x.borrow_mut().execute(module.borrow().clone(), &self.library);
-        //         }
-        //     }
-        // }
-    }
 
 }

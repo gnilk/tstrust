@@ -1,4 +1,4 @@
-use crate::test_runner::{AssertClass, AssertError, CaseHandler, PrePostCaseHandler};
+use crate::test_runner::{AssertClass, AssertError, PrePostCaseHandler};
 
 pub struct Context {
     pub dependencies : Vec<CaseDependency>,

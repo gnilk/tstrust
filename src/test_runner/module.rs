@@ -35,7 +35,7 @@ impl Module {
         return false;
     }
 
-    pub fn execute(&mut self, dynlib : &DynLibraryRef) {
+    pub fn execute(&mut self, dynlib : &DynLibrary) {
         // Execute main first, main can define various dependens plus pre/post functions
         self.execute_main(dynlib);
 
@@ -50,7 +50,7 @@ impl Module {
         self.execute_exit(dynlib);
     }
 
-    fn execute_main(&mut self, dynlib : &DynLibraryRef) {
+    fn execute_main(&mut self, dynlib : &DynLibrary) {
         if !self.main_func.is_some() {
             return;
         }
@@ -85,8 +85,7 @@ impl Module {
         }
     }
 
-
-    fn execute_exit(&mut self, dynlib : &DynLibraryRef) {
+    fn execute_exit(&mut self, dynlib : &DynLibrary) {
         if !self.exit_func.is_some() {
             return;
         }
@@ -99,7 +98,7 @@ impl Module {
     }
 
 
-    fn execute_test(&self, tc : &TestFunctionRef, dynlib : &DynLibraryRef) {
+    fn execute_test(&self, tc : &TestFunctionRef, dynlib : &DynLibrary) {
         if self.pre_case_func.is_some() {
             let mut trun_interface = tc.borrow().get_truninterface_ptr(); //TestRunnerInterface::new();
             self.pre_case_func.as_ref().unwrap()(&mut trun_interface);

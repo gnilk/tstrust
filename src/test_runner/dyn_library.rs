@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::ffi::CString;
 use std::process::Command;
 use libloading::{Symbol};
@@ -12,17 +10,15 @@ pub struct DynLibrary {
     pub library : libloading::Library,
 }
 
-pub type DynLibraryRef = Rc<RefCell<DynLibrary>>;
-
 impl DynLibrary {
     // Should return result...
-    pub fn new(dynlib_name : &str) -> DynLibraryRef {
+    pub fn new(dynlib_name : &str) -> DynLibrary {
 
         let exports = Self::prescan(dynlib_name);
         let name = dynlib_name.to_string();
         let library =  Self::cache_library(dynlib_name);
 
-        return Rc::new(RefCell::new(Self {name, exports, library}));
+        return Self {name, exports, library};
     }
 
     pub fn get_testable_function(&self, symbol : &str) -> Symbol<TestableFunction> {
