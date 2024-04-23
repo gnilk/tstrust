@@ -1,11 +1,12 @@
 use std::collections::{HashMap};
-use crate::test_runner::{Config, Singleton, DynLibrary, Module, TestFunction, TestFunctionRef, TestScope, TestType};
+use crate::test_runner::{Config, Singleton, DynLibrary, Module, TestFunction, TestFunctionRef, TestScope, TestType, TestReturnCode, TestResult};
 
 pub struct TestRunner {
     library : DynLibrary,
     modules : HashMap<String, Module>,
     global_main : Option<TestFunctionRef>,
     global_exit : Option<TestFunctionRef>,
+    test_results : Vec<TestResult>,
 }
 impl TestRunner {
     pub fn new(filename : &str) -> TestRunner {
@@ -14,6 +15,7 @@ impl TestRunner {
             modules : HashMap::new(),
             global_main : None,
             global_exit : None,
+            test_results : Vec::new(),
 
         };
         inst.prescan();
@@ -180,27 +182,45 @@ impl TestRunner {
         self.execute_all_modules();
         self.execute_library_exit();
 
+        // Can't do this???  - something with mutable and borrows that simply don't play nice with me...
+        //self.execute_libraray_opt_func(&self.global_exit);
+
+
         println!("<--- Start Library  \t{}", self.library.name);
 
     }
 
-    fn execute_library_main(&self) {
+    fn execute_library_main(&mut self) {
         match &self.global_main {
             None => (),
             Some(x) => {
                 if x.borrow().should_execute() {
                     x.borrow_mut().execute_no_module(&self.library);
+                    self.test_results.push(x.borrow().test_result.clone());
                 }
             }
         }
     }
 
-    fn execute_library_exit(&self) {
+    fn execute_library_exit(&mut self) {
         match &self.global_exit {
             None => (),
             Some(x) => {
                 if x.borrow().should_execute() {
                     x.borrow_mut().execute_no_module(&self.library);
+                    self.test_results.push(x.borrow().test_result.clone());
+                }
+            }
+        }
+    }
+
+    fn execute_libraray_opt_func(&mut self, opt_func : &Option<TestFunctionRef>) {
+        match opt_func {
+            None => (),
+            Some(x) => {
+                if x.borrow().should_execute() {
+                    x.borrow_mut().execute_no_module(&self.library);
+                    self.test_results.push(x.borrow().test_result.clone());
                 }
             }
         }
@@ -217,6 +237,12 @@ impl TestRunner {
             // HOW SHOULD THIS LINE WORK!!!
             //self.execute_module_tests(module);
             module.execute(&self.library);
+
+            // Gather and append results...
+            let mut results = module.gather_test_results();
+            self.test_results.append(&mut results);
+
+
         };
     }
 
@@ -229,5 +255,31 @@ impl TestRunner {
         //self.execute_module_main(module);
     }
 
+    pub fn print_results(&self) {
+        let mut num_passed = 0;
+        let mut num_failed = 0;
+        let mut num_executed = 0;
 
+
+        for r in &self.test_results {
+            // We only gather number of executed
+            num_executed += 1;
+
+            if r.did_pass() {
+                num_passed += 1;
+            } else {
+                num_failed += 1;
+            }
+        } // for
+        println!("Tests Executed: {}", num_executed);
+        println!("Tests Failed..: {}", num_failed);
+
+        println!("Failed:");
+        for r in &self.test_results {
+            if r.did_fail() {
+                r.print_failure();
+            }
+        }
+
+    }
 }

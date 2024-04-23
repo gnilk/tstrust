@@ -1,10 +1,10 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AssertClass {
     Error,
     Abort,
     Fatal,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AssertError {
     pub assert_class: AssertClass,
     pub file : String,

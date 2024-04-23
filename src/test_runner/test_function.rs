@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::{Instant};
 use crate::test_runner::*;
 
 // Testable function
@@ -35,23 +35,10 @@ pub struct TestFunction {
 
     state : State,
     pub dependencies : Vec<TestFunctionRef>,
-    test_result: TestResult,
+    pub test_result: TestResult,
 }
 pub type TestFunctionRef = Rc<RefCell<TestFunction>>;
 
-#[derive(Debug)]
-pub struct TestResult {
-    exec_duration: Duration,
-
-    raw_return_code: c_int,     // The return code from the C/C++ function, use 'TestReturnCode::try_from' to transform and verify
-    return_code: Result<TestReturnCode,()>, // raw c_int enum from ITestInterface converted to internal enum after execution
-
-    assert_error: Option<AssertError>,        // Holds the assert error msg if any..
-    num_error : u32,            // Note: Always one, if an error occurs - however, embedded or single-threading can have several
-    num_assert : u32,           // Note: Always one, if an error occurs - however, embedded or single-threading can have several
-
-    symbol : String,            // The actual exported symbol
-}
 
 //
 // The context is a global variable which is set fresh for each execution
@@ -91,36 +78,6 @@ extern "C" fn assert_error_handler(exp : *const c_char, file : *const c_char, li
     assert_error.print();
     CONTEXT.with_borrow_mut(|ctx| ctx.assert_error = Some(assert_error));
 }
-
-
-impl TestResult {
-    pub fn new() -> TestResult {
-        Self {
-            return_code: Ok(TestReturnCode::NotExecuted),
-            assert_error : None,
-            exec_duration: Duration::new(0, 0),
-            num_assert : 0,
-            num_error : 0,
-            symbol : String::default(),
-            raw_return_code: 0,
-        }
-    }
-    pub fn print(&self) {
-        //
-        // Asserts are not printed here - they are printed as they come up..
-        //
-        match self.return_code {
-            Ok(TestReturnCode::Pass) => println!("=== PASS:\t{}, {} sec, {}", self.symbol, self.exec_duration.as_secs_f32(), self.raw_return_code),
-            Ok(TestReturnCode::Fail) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.exec_duration.as_secs_f32(), self.raw_return_code),
-            Ok(TestReturnCode::FailModule) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.exec_duration.as_secs_f32(), self.raw_return_code),
-            Ok(TestReturnCode::FailAll) => println!("=== FAIL:\t{}, {} sec, {}", self.symbol, self.exec_duration.as_secs_f32(), self.raw_return_code),
-            _ => println!("=== INVALID RETURN CODE ({}) for {}", self.raw_return_code, self.symbol),
-        }
-        // Empty line in the console output
-        println!("");
-    }
-}
-
 
 impl TestFunction {
     pub fn new(symbol : &str, module : &str, case : &str) -> TestFunctionRef {
@@ -328,9 +285,9 @@ impl TestFunction {
         self.test_result.raw_return_code = raw_result;
         // Assert takes predence..
         if self.test_result.assert_error.is_some() {
-            self.test_result.return_code = Ok(TestReturnCode::Fail);
+            self.test_result.return_code = Some(TestReturnCode::Fail);
         } else {
-            self.test_result.return_code = TestReturnCode::try_from(raw_result);
+            self.test_result.return_code = TestReturnCode::try_from(raw_result).ok();
         }
     }
     fn print_result(&self) {

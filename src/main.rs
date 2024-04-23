@@ -95,6 +95,10 @@ impl App {
         println!("");
         println!("-------------------");
         println!("Duration......: {} sec", duration.as_secs_f32());
+        for runner in &mut self.runners {
+            runner.print_results();
+        }
+
 
     }
 

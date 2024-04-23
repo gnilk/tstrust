@@ -122,4 +122,29 @@ impl Module {
         return Err(());
     }
 
+    pub fn gather_test_results(&self) -> Vec<TestResult> {
+        let mut test_results: Vec<TestResult> = Vec::new();
+
+        match &self.main_func {
+            Some(x) if x.borrow().is_finished() => {
+               test_results.push(x.borrow().test_result.clone());
+            },
+            _ => (),
+        }
+
+        match &self.exit_func {
+            Some(x) if x.borrow().is_finished() => {
+                test_results.push(x.borrow().test_result.clone());
+            },
+            _ => (),
+        }
+
+        for tc in &self.test_cases {
+            test_results.push(tc.borrow().test_result.clone());
+        }
+
+        return test_results;
+
+    }
+
 }
