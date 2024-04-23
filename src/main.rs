@@ -13,7 +13,8 @@ fn main() {
 
 
     // Putting stuff in an 'app' instance - this 'solves' global variable problems..
-    // Tried having a 'context' but was constantly battling life-time handling - this made it much easier...
+    // Still having a global variable (temporary) since I need to track stuff the function under test is doing..
+    // The global is reset between call's..
     let mut app = App::new();
     app.scan_libraries(&cfg.inputs);
 
@@ -32,7 +33,7 @@ struct App {
 }
 impl App {
 
-    pub fn new<'a>() -> App {
+    pub fn new() -> App {
         let instance = App {
             runners : Vec::new(),
         };
@@ -72,7 +73,7 @@ impl App {
     }
     fn list_tests(&self) {
         for runner in &self.runners {
-            runner.dump();
+            runner.list_tests();
         }
     }
 

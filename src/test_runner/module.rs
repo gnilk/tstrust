@@ -1,13 +1,23 @@
 use crate::test_runner::*;
 
+//
+// A module is a semantic grouping of tests. The module name is derived from the name, like:
+//  test_<module>_<name_with_whatever>
+//
+// Only from main is it possible to call 'depends' (in the C/C++ version we allow this from everywhere)
+//
 #[derive(Debug)]
 pub struct Module {
     pub name : String,
+    // Set through 'case_depends'
     pub pre_case_func : Option<PrePostCaseHandler>,
     pub post_case_func : Option<PrePostCaseHandler>,
 
+    // main is: 'test_<module>()'
     pub main_func : Option<TestFunctionRef>,
+    // exit is: 'test_<module>_exit()'  <- ergo, exit is a reserved function name...
     pub exit_func : Option<TestFunctionRef>,
+    // regular test cases
     pub test_cases : Vec<TestFunctionRef>,
 }
 
@@ -27,6 +37,8 @@ impl Module {
         return module;
     }
 
+    // Checks if we should execute
+    // FIXME: Could also check 'flags'
     pub fn should_execute(&self) -> bool {
         let cfg = Config::instance();
         if cfg.modules.contains(&"-".to_string()) || cfg.modules.contains(&self.name) {
@@ -35,6 +47,7 @@ impl Module {
         return false;
     }
 
+    // Execute all functions in a module (incl. main/exit)
     pub fn execute(&mut self, dynlib : &DynLibrary) {
         // Execute main first, main can define various dependens plus pre/post functions
         self.execute_main(dynlib);
@@ -55,7 +68,6 @@ impl Module {
             return;
         }
 
-//        println!("Execute main!");
         let func = self.main_func.as_ref().unwrap();
         func.borrow_mut().execute(self, dynlib);
 
@@ -67,12 +79,8 @@ impl Module {
 
         // handle dependencies
         if ctx.dependencies.is_empty() {
-//            println!("No dependencies");
             return;
         }
-//        println!("Dependencies");
-//        ctx.dump();
-        // FIXME: Look up the correct test-case (use case names) and then append the dependency list to the test-case
 
         for casedep in &ctx.dependencies {
             if let Some(tc) = self.get_test_case(casedep.case.as_str()).ok() {
@@ -96,7 +104,6 @@ impl Module {
         // Grab hold of the context and verify test-cases...
         CONTEXT.take();
     }
-
 
     fn execute_test(&self, tc : &TestFunctionRef, dynlib : &DynLibrary) {
         if self.pre_case_func.is_some() {

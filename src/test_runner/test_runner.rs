@@ -1,6 +1,9 @@
 use std::collections::{HashMap};
 use crate::test_runner::{Config, Singleton, DynLibrary, Module, TestFunction, TestFunctionRef, TestScope, TestType, ResultSummary};
 
+//
+// The runner holds all test details for a single library..
+//
 pub struct TestRunner {
     library : DynLibrary,
     modules : HashMap<String, Module>,
@@ -10,9 +13,9 @@ pub struct TestRunner {
     test_results : Vec<ResultSummary>,
 }
 
-
-
 impl TestRunner {
+
+    // filename should be a shared library
     pub fn new(filename : &str) -> TestRunner {
         let mut inst = TestRunner {
             library : DynLibrary::new(filename),
@@ -27,22 +30,17 @@ impl TestRunner {
         return inst;
     }
 
-
+    //
+    // Internal, called during ctor - creates the test-functions and the modules
+    //
     fn prescan(&mut self) {
-        // FIXME: Implement
-        //let lib = self.library.borrow_mut();
-        //let lib = self.library.borrow();
+
         for x in &self.library.exports {
             let res = Self::create_test_function(x);
             if res.is_err() {
                 continue;
             }
             let func = res.unwrap();
-
-            // if func.borrow().symbol == "test_exit" {
-            //     println!("WEFWeffwef");
-            // }
-            // println!("symbol='{}'    module='{}'    case='{}'", x, func.borrow().module_name, func.borrow().case_name);
 
             match func.borrow().test_scope {
                 TestScope::Global => {
@@ -72,7 +70,10 @@ impl TestRunner {
         };
     }
 
-    pub fn dump(&self) {
+    //
+    // List tests available (with proper grouping) in this runner and if they are scheduled for execution
+    //
+    pub fn list_tests(&self) {
         if Config::instance().test_global_main {
             println!("* Globals:");
         } else {

@@ -290,7 +290,4 @@ impl TestFunction {
             self.test_result.return_code = TestReturnCode::try_from(raw_result).ok();
         }
     }
-
 }
-
-
