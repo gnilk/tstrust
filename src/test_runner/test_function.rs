@@ -48,12 +48,19 @@ thread_local! {
     pub static CONTEXT: RefCell<Context> = RefCell::new(Context::new());
 }
 
+// FIXME: when rust support c-variadic's
+// Change to: unsafe extern "C" fn fatal_handler(line : c_int, file: *const c_char, format: *const c_char, ...) {
+// see: https://github.com/rust-lang/rust/issues/44930
+extern "C" fn fatal_handler(line : c_int, file: *const c_char, format: *const c_char) {
+    let str_exp = unsafe { CStr::from_ptr(format).to_str().expect("assert error impl, exp error") };
+    let str_file = unsafe { CStr::from_ptr(file).to_str().expect("assert error impl, file error") };
+
+    println!("Fatal Error: {}:{}\t'{}'", str_file, line, str_exp);
+}
 extern "C" fn set_pre_case_handler(case_handler: PrePostCaseHandler) {
-    println!("PRE_CASE_CALLED!");
     CONTEXT.with(|ctx| ctx.borrow_mut().pre_case_handler = Some(case_handler));
 }
 extern "C" fn set_post_case_handler(case_handler: PrePostCaseHandler) {
-    println!("POST_CASE_CALLED!");
     CONTEXT.with(|ctx| ctx.borrow_mut().post_case_handler = Some(case_handler));
 }
 
@@ -202,6 +209,7 @@ impl TestFunction {
 
     pub fn get_truninterface_ptr(&self) -> TestRunnerInterface {
         let mut trun_interface = TestRunnerInterface::new();
+        trun_interface.fatal = Some(fatal_handler);
         trun_interface.case_depends = Some(dependency_handler);
         trun_interface.assert_error = Some(assert_error_handler);
         trun_interface.set_pre_case_callback = Some(set_pre_case_handler);

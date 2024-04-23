@@ -31,6 +31,7 @@ impl TryFrom<c_int> for TestReturnCode {
 pub type TestableFunction = unsafe extern "C" fn(*mut TestRunnerInterface) -> c_int;
 pub type PrePostCaseHandler = extern "C" fn(*mut TestRunnerInterface) -> c_void;
 pub type AssertErrorHandler = extern "C" fn(exp : *const c_char, file : *const c_char, line : c_int);
+pub type LogHandlerNonVar =  extern "C" fn (line : c_int, file: *const c_char, format: *const c_char);
 pub type LogHandler =  extern "C" fn (line : c_int, file: *const c_char, format: *const c_char, ...) -> c_void;
 //pub type CaseHandler = extern "C" fn(case_handler: *mut TestRunnerInterface);
 pub type CaseHandler = extern "C" fn(case_handler: PrePostCaseHandler);
@@ -42,7 +43,7 @@ pub struct TestRunnerInterface {
     pub info : Option<LogHandler>,
     pub warning : Option<LogHandler>,
     pub error: Option<LogHandler>,
-    pub fatal : Option<LogHandler>,
+    pub fatal : Option<LogHandlerNonVar>,
     pub abort : Option<LogHandler>,
 
     pub assert_error : Option<AssertErrorHandler>,
