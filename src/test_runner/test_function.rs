@@ -224,21 +224,15 @@ impl TestFunction {
         let t_start = Instant::now();
 
         // Create the test runner interface...
-        let mut trun_interface = TestRunnerInterface::new();
-        trun_interface.case_depends = Some(dependency_handler);
-        trun_interface.assert_error = Some(assert_error_handler);
-        trun_interface.set_pre_case_callback = Some(set_pre_case_handler);
-        trun_interface.set_post_case_callback = Some(set_post_case_handler);
-        let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
+        let mut trun_interface = self.get_truninterface_ptr(); //TestRunnerInterface::new();
 
         // And the context..
         CONTEXT.set(Context::new());
 
-
         // Look up the symbol and exeecute
         let lib = dynlib.borrow();
         let func = lib.get_testable_function(&self.symbol);
-        let raw_result = unsafe { func(ptr_trun) };
+        let raw_result = unsafe { func(&mut trun_interface) };
 
         // Stop timer
         self.test_result.exec_duration = t_start.elapsed();
@@ -250,10 +244,17 @@ impl TestFunction {
         self.test_result.symbol = self.symbol.clone();
 
         self.test_result.print();
-
         self.change_state(State::Finished);
+    }
 
+    pub fn get_truninterface_ptr(&self) -> TestRunnerInterface {
+        let mut trun_interface = TestRunnerInterface::new();
+        trun_interface.case_depends = Some(dependency_handler);
+        trun_interface.assert_error = Some(assert_error_handler);
+        trun_interface.set_pre_case_callback = Some(set_pre_case_handler);
+        trun_interface.set_post_case_callback = Some(set_post_case_handler);
 
+        return trun_interface;
     }
 
     // FIXME: Should return result<>
@@ -273,12 +274,8 @@ impl TestFunction {
         let t_start = Instant::now();
 
         // Create the test runner interface...
-        let mut trun_interface = TestRunnerInterface::new();
-        trun_interface.case_depends = Some(dependency_handler);
-        trun_interface.assert_error = Some(assert_error_handler);
-        trun_interface.set_pre_case_callback = Some(set_pre_case_handler);
-        trun_interface.set_post_case_callback = Some(set_post_case_handler);
-        let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
+
+        let mut trun_interface = self.get_truninterface_ptr(); //TestRunnerInterface::new();
 
         // And the context..
         CONTEXT.set(Context::new());
@@ -288,17 +285,17 @@ impl TestFunction {
         //       otherwise we could simply run in the module it-self (which might have been more prudent)
         // Execute pre case handler - if any has been assigned
         if (module.pre_case_func.is_some()) {
-            module.pre_case_func.as_ref().unwrap()(ptr_trun);
+            module.pre_case_func.as_ref().unwrap()(&mut trun_interface);
         }
 
         // Look up the symbol and exeecute
         let lib = dynlib.borrow();
         let func = lib.get_testable_function(&self.symbol);
-        let raw_result = unsafe { func(ptr_trun) };
+        let raw_result = unsafe { func(&mut trun_interface) };
 
         // Execute post case handler - if any...
         if (module.post_case_func.is_some()) {
-            module.post_case_func.as_ref().unwrap()(ptr_trun);
+            module.post_case_func.as_ref().unwrap()(&mut trun_interface);
         }
 
         // Stop timer

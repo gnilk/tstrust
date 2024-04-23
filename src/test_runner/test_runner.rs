@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::time::Instant;
 use crate::test_runner::{Config, Singleton, DynLibraryRef, Module, TestFunction, TestFunctionRef, TestScope, TestType};
@@ -179,13 +179,7 @@ impl TestRunner {
 
         self.execute_global_main();
 
-        for (_, module) in self.modules.iter_mut() {
-            if !module.should_execute() {
-                continue;
-            }
-            module.execute(&self.library);
-        };
-
+        self.execute_all_modules();
 
         self.execute_global_exit();
         let duration = t_start.elapsed();
@@ -217,15 +211,30 @@ impl TestRunner {
         }
     }
 
-    fn execute_module_tests(&self, module : &mut Module) {
+    //
+    // Execute tests in all modules
+    //
+    fn execute_all_modules(&mut self) {
+        for (_, module) in self.modules.iter_mut() {
+            if !module.should_execute() {
+                continue;
+            }
+            // HOW SHOULD THIS LINE WORK!!!
+            //self.execute_module_tests(module);
+            module.execute(&self.library);
+        };
+    }
+
+    fn execute_module_tests(&mut self, module : &mut Module) {
         // Done twice now...
         if !module.should_execute() {
             return;
         }
         module.execute(&self.library);
         //self.execute_module_main(module);
-
     }
+
+
     fn execute_module_main(&self, module : &Module) {
         // match &module.borrow().main_func {
         //     None => (),

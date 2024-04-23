@@ -1,11 +1,8 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use crate::test_runner::*;
 
 #[derive(Debug)]
 pub struct Module {
     pub name : String,
-//    dynlib : DynLibraryRef,
     pub pre_case_func : Option<PrePostCaseHandler>,
     pub post_case_func : Option<PrePostCaseHandler>,
 
@@ -51,18 +48,6 @@ impl Module {
         }
 
         self.execute_exit(dynlib);
-    }
-    fn execute_test(&self, tc : &TestFunctionRef, dynlib : &DynLibraryRef) {
-        if (self.pre_case_func.is_some()) {
-            //let mut trun_interface = TestRunnerInterface::new();
-            //let ptr_trun = &mut trun_interface; //std::ptr::addr_of!(trun_interface);
-            self.pre_case_func.as_ref().unwrap()(std::ptr::null_mut());
-        }
-        tc.borrow_mut().execute(self, dynlib);
-
-        if (self.post_case_func.is_some()) {
-            self.post_case_func.as_ref().unwrap()(std::ptr::null_mut());
-        }
     }
 
     fn execute_main(&mut self, dynlib : &DynLibraryRef) {
@@ -111,6 +96,21 @@ impl Module {
 
         // Grab hold of the context and verify test-cases...
         CONTEXT.take();
+    }
+
+
+    fn execute_test(&self, tc : &TestFunctionRef, dynlib : &DynLibraryRef) {
+        if self.pre_case_func.is_some() {
+            let mut trun_interface = tc.borrow().get_truninterface_ptr(); //TestRunnerInterface::new();
+            self.pre_case_func.as_ref().unwrap()(&mut trun_interface);
+        }
+
+        tc.borrow_mut().execute(self, dynlib);
+
+        if self.post_case_func.is_some() {
+            let mut trun_interface = tc.borrow().get_truninterface_ptr(); //TestRunnerInterface::new();
+            self.post_case_func.as_ref().unwrap()(&mut trun_interface);
+        }
     }
 
 
