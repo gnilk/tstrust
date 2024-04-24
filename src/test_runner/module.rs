@@ -22,8 +22,6 @@ pub struct Module {
 }
 
 impl Module {
-    //pub fn new<'a>(name : &'a str, dyn_library: &'a DynLibrary) -> Module<'a> {
-    //pub fn new(name : &str, dyn_library: &DynLibraryRef) -> Module {
     pub fn new(name : &str) -> Module {
         let module = Module {
             name : name.to_string(),
@@ -38,7 +36,7 @@ impl Module {
     }
 
     // Checks if we should execute
-    // FIXME: Could also check 'flags'
+    // FIXME: Could also check 'flags' - this needs better impl - support for '!module' and '-m a*' etc..
     pub fn should_execute(&self) -> bool {
         let cfg = Config::instance();
         if cfg.modules.contains(&"-".to_string()) || cfg.modules.contains(&self.name) {
@@ -63,6 +61,7 @@ impl Module {
         self.execute_exit(dynlib);
     }
 
+    // Execute module main, test_<module>
     fn execute_main(&mut self, dynlib : &DynLibraryRef) {
         if !self.main_func.is_some() {
             return;
@@ -97,6 +96,7 @@ impl Module {
         }
     }
 
+    // Execute the module exit, test_<module>_exit
     fn execute_exit(&mut self, dynlib : &DynLibraryRef) {
         if !self.exit_func.is_some() {
             return;
@@ -106,6 +106,7 @@ impl Module {
         func.borrow_mut().execute(self, dynlib);
     }
 
+    // Execute a test, including pre/post cases
     fn execute_test(&self, tc : &TestFunctionRef, dynlib : &DynLibraryRef) {
         if self.pre_case_func.is_some() {
             let mut trun_interface = get_truninterface_ptr(); //TestRunnerInterface::new();
