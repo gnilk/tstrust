@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void, CStr};
-use std::ops::Deref;
 use std::ptr;
 use std::rc::Rc;
 use std::sync::Mutex;
@@ -65,7 +64,7 @@ impl ThreadArg {
 //
 //pub static CONTEXT: RefCell<Context> = RefCell::new(Context::new());
 pub static CONTEXT: Lazy<Mutex<Context>> = Lazy::new(|| {
-    let mut ctx = Context::new();
+    let ctx = Context::new();
     Mutex::new(ctx)
 });
 
@@ -88,6 +87,13 @@ extern "C" fn dependency_handler(name : *const c_char, dep_list: *const c_char) 
     CONTEXT.lock().unwrap().add_dependency(str_name, str_deplist);
 }
 
+extern "C" fn all_log_handlers(line : c_int, file: *const c_char, format: *const c_char) {
+    let str_file = unsafe { CStr::from_ptr(file).to_str().expect("assert error impl, file error") };
+    let str_msg = unsafe { CStr::from_ptr(format).to_str().expect("assert error impl, exp error") };
+
+    println!("log: {}:{}:{}", str_file, line, str_msg);
+
+}
 // FIXME: when rust support c-variadic's
 // Change to: unsafe extern "C" fn fatal_handler(line : c_int, file: *const c_char, format: *const c_char, ...) {
 // see: https://github.com/rust-lang/rust/issues/44930
@@ -95,12 +101,40 @@ extern "C" fn fatal_handler(line : c_int, file: *const c_char, format: *const c_
     let str_exp = unsafe { CStr::from_ptr(format).to_str().expect("assert error impl, exp error") };
     let str_file = unsafe { CStr::from_ptr(file).to_str().expect("assert error impl, file error") };
 
-    println!("Fatal Error: {}:{}\t'{}'", str_file, line, str_exp);
+    let func_error = TestFuncError::new(TestFuncErrorClass::Fatal, str_file, line as u32, str_exp);
+    func_error.print();
+    CONTEXT.lock().unwrap().func_error = Some(func_error);
 
     unsafe {
         pthread_exit(ptr::null_mut());
     }
 }
+extern "C" fn error_handler(line : c_int, file: *const c_char, format: *const c_char) {
+    let str_exp = unsafe { CStr::from_ptr(format).to_str().expect("assert error impl, exp error") };
+    let str_file = unsafe { CStr::from_ptr(file).to_str().expect("assert error impl, file error") };
+
+    let func_error = TestFuncError::new(TestFuncErrorClass::Error, str_file, line as u32, str_exp);
+    func_error.print();
+    CONTEXT.lock().unwrap().func_error = Some(func_error);
+
+    unsafe {
+        pthread_exit(ptr::null_mut());
+    }
+}
+
+extern "C" fn abort_handler(line : c_int, file: *const c_char, format: *const c_char) {
+    let str_exp = unsafe { CStr::from_ptr(format).to_str().expect("assert error impl, exp error") };
+    let str_file = unsafe { CStr::from_ptr(file).to_str().expect("assert error impl, file error") };
+
+    let func_error = TestFuncError::new(TestFuncErrorClass::Abort, str_file, line as u32, str_exp);
+    func_error.print();
+    CONTEXT.lock().unwrap().func_error = Some(func_error);
+
+    unsafe {
+        pthread_exit(ptr::null_mut());
+    }
+}
+
 
 extern "C" fn assert_error_handler(exp : *const c_char, file : *const c_char, line : c_int) {
 
@@ -110,9 +144,9 @@ extern "C" fn assert_error_handler(exp : *const c_char, file : *const c_char, li
     // NOTE: This is normally printed with the logger
     //println!("Assert Error: {}:{}\t'{}'", str_file, line, str_exp);
 
-    let assert_error = AssertError::new(str_file, line as u32, str_exp);
-    assert_error.print();
-    CONTEXT.lock().unwrap().assert_error = Some(assert_error);
+    let func_error = TestFuncError::new(TestFuncErrorClass::Error, str_file, line as u32, str_exp);
+    func_error.print();
+    CONTEXT.lock().unwrap().func_error = Some(func_error);
 
     unsafe {
         pthread_exit(ptr::null_mut());
@@ -122,7 +156,13 @@ extern "C" fn assert_error_handler(exp : *const c_char, file : *const c_char, li
 
 pub fn get_truninterface_ptr() -> TestRunnerInterface {
     let mut trun_interface = TestRunnerInterface::new();
+    trun_interface.debug = Some(all_log_handlers);
+    trun_interface.info = Some(all_log_handlers);
+    trun_interface.warning = Some(all_log_handlers);
+
+    trun_interface.error = Some(error_handler);
     trun_interface.fatal = Some(fatal_handler);
+    trun_interface.abort = Some(abort_handler);
     trun_interface.case_depends = Some(dependency_handler);
     trun_interface.assert_error = Some(assert_error_handler);
     trun_interface.set_pre_case_callback = Some(set_pre_case_handler);
@@ -308,7 +348,7 @@ impl TestFunction {
 
         // Create test result
         let mut ctx = CONTEXT.lock().unwrap();
-        self.test_result.assert_error = ctx.assert_error.take();
+        self.test_result.func_error = ctx.func_error.take();
 
 
         self.handle_test_return(ctx.raw_result);
@@ -332,13 +372,10 @@ impl TestFunction {
         }
     }
 
-    fn handle_result_from_ctx(&mut self, context: &mut Context) {
-        self.test_result.assert_error = context.assert_error.take();
-    }
     fn handle_test_return(&mut self, raw_result : c_int) {
         self.test_result.raw_return_code = raw_result;
         // Assert takes predence..
-        if self.test_result.assert_error.is_some() {
+        if self.test_result.func_error.is_some() {
             self.test_result.return_code = Some(TestReturnCode::Fail);
         } else {
             self.test_result.return_code = TestReturnCode::try_from(raw_result).ok();

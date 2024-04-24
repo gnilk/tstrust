@@ -39,12 +39,13 @@ pub type DependsHandler = extern "C" fn(name : *const c_char, dep_list: *const c
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct TestRunnerInterface {
-    pub debug : Option<LogHandler>,
-    pub info : Option<LogHandler>,
-    pub warning : Option<LogHandler>,
-    pub error: Option<LogHandler>,
+    pub debug : Option<LogHandlerNonVar>,
+    pub info : Option<LogHandlerNonVar>,
+    pub warning : Option<LogHandlerNonVar>,
+    // FIXME: Change once rust support variadic arg handling
+    pub error: Option<LogHandlerNonVar>,
     pub fatal : Option<LogHandlerNonVar>,
-    pub abort : Option<LogHandler>,
+    pub abort : Option<LogHandlerNonVar>,
 
     pub assert_error : Option<AssertErrorHandler>,
 

@@ -1,22 +1,22 @@
 #[derive(Debug, Clone)]
-pub enum AssertClass {
+pub enum TestFuncErrorClass {
     Error,
     Abort,
     Fatal,
 }
 #[derive(Debug, Clone)]
-pub struct AssertError {
-    pub assert_class: AssertClass,
+pub struct TestFuncError {
+    pub eclass: TestFuncErrorClass,
     pub file : String,
     pub line : u32,
     pub message : String,
 }
-impl AssertError {
-    pub fn new(file : &str, line : u32, message : &str) -> AssertError {
+impl TestFuncError {
+    pub fn new(eclass : TestFuncErrorClass, file : &str, line : u32, message : &str) -> TestFuncError {
         Self {
-            assert_class : AssertClass::Error,
+            eclass,
             file : file.to_string(),
-            line : line,
+            line,
             message : message.to_string(),
         }
     }

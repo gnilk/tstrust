@@ -1,6 +1,6 @@
 use std::ffi::c_int;
 use std::time::Duration;
-use crate::test_runner::{AssertError, TestReturnCode};
+use crate::test_runner::{TestFuncError, TestReturnCode};
 
 #[derive(Debug, Clone)]
 pub struct TestResult {
@@ -9,7 +9,7 @@ pub struct TestResult {
     pub raw_return_code: c_int,     // The return code from the C/C++ function, use 'TestReturnCode::try_from' to transform and verify
     pub return_code: Option<TestReturnCode>, // raw c_int enum from ITestInterface converted to internal enum after execution
 
-    pub assert_error: Option<AssertError>,        // Holds the assert error msg if any..
+    pub func_error: Option<TestFuncError>,        // Holds the assert error msg if any..
     pub num_error : u32,            // Note: Always one, if an error occurs - however, embedded or single-threading can have several
     pub num_assert : u32,           // Note: Always one, if an error occurs - however, embedded or single-threading can have several
 
@@ -20,7 +20,7 @@ impl TestResult {
     pub fn new() -> TestResult {
         Self {
             return_code: None,
-            assert_error : None,
+            func_error: None,
             exec_duration: Duration::new(0, 0),
             num_assert : 0,
             num_error : 0,
@@ -78,8 +78,8 @@ impl TestResult {
         return true;
     }
     pub fn print_failure(&self) {
-        if self.assert_error.is_some() {
-            let ass_err = &self.assert_error.as_ref().unwrap();
+        if self.func_error.is_some() {
+            let ass_err = &self.func_error.as_ref().unwrap();
             println!("  [Tma]: {}, {}:{}, {}", self.symbol, ass_err.file, ass_err.line, ass_err.message);
             return;
         }

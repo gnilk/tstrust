@@ -28,7 +28,7 @@ impl<T> PThread<T> {
         unsafe {
             pthread_attr_init(attr_ptr);
 
-            let mut err = pthread_create(h_thread_ptr, attr_ptr, func, ptr_arg);
+            let err = pthread_create(h_thread_ptr, attr_ptr, func, ptr_arg);
             if err != 0 {
                 return Err("pthread create failed!");
             }

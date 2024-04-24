@@ -1,9 +1,9 @@
-use crate::test_runner::{AssertClass, AssertError, PrePostCaseHandler};
+use crate::test_runner::{TestFuncErrorClass, TestFuncError, PrePostCaseHandler};
 
 pub struct Context {
     pub raw_result : i32,
     pub dependencies : Vec<CaseDependency>,
-    pub assert_error : Option<AssertError>,
+    pub func_error : Option<TestFuncError>,
     pub pre_case_handler : Option<PrePostCaseHandler>,
     pub post_case_handler : Option<PrePostCaseHandler>,
 }
@@ -17,7 +17,7 @@ impl Default for Context {
         Self {
             raw_result : 0,
             dependencies : Vec::new(),
-            assert_error : None,
+            func_error : None,
             pre_case_handler : None,
             post_case_handler : None,
         }
@@ -28,7 +28,7 @@ impl Context {
         Self {
             raw_result : 0,
             dependencies : Vec::new(),
-            assert_error : None,
+            func_error : None,
             pre_case_handler : None,
             post_case_handler : None,
         }
@@ -39,7 +39,7 @@ impl Context {
         Self {
             raw_result : 0,
             dependencies : Vec::new(),
-            assert_error : None,
+            func_error : None,
             pre_case_handler : None,
             post_case_handler : None,
         }
@@ -58,14 +58,14 @@ impl Context {
         self.dependencies.push(case_dep);
 
     }
-    pub fn set_assert_error(&mut self, assert_class: AssertClass, line : u32, file : &str, message : &str) {
-        let assert_error = AssertError {
-            assert_class : assert_class,
-            line : line,
+    pub fn set_assert_error(&mut self, eclass: TestFuncErrorClass, line : u32, file : &str, message : &str) {
+        let func_error = TestFuncError {
+            eclass,
+            line,
             file : file.to_string(),
             message : message.to_string(),
         };
-        self.assert_error = Some(assert_error);
+        self.func_error = Some(func_error);
     }
 
     pub fn dump(&self) {

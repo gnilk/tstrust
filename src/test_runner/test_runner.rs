@@ -232,9 +232,7 @@ impl TestRunner {
             if !module.should_execute() {
                 continue;
             }
-            // HOW SHOULD THIS LINE WORK!!!
-            //self.execute_module_tests(module);
-            let dynlibref = Rc::new(RefCell::new(&self.library));
+
             module.execute(&self.library);
 
             // Gather and append results...

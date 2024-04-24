@@ -72,7 +72,7 @@ impl Module {
         func.borrow_mut().execute(self, dynlib);
 
         // Grab hold of the context and verify test-cases...
-        let mut ctx = CONTEXT.lock().unwrap();
+        let ctx = CONTEXT.lock().unwrap();
 
         self.pre_case_func = ctx.pre_case_handler;
         self.post_case_func = ctx.post_case_handler;
