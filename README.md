@@ -12,7 +12,8 @@ Plus, I can use the real version as a 'unit-test'.
 ! Dependency handling
 ! Pre/Post case handling
 - Better internal return codes (in quite a lot of places)
-- Threading for test-case execution
+! Threading for test-case execution
+  - Ability to switch of threading from cmd-line..
 + Output formatting
 ! Nicer split in sub-modules
 - Reporting
@@ -20,5 +21,7 @@ Plus, I can use the real version as a 'unit-test'.
   ! Handle assert-errors and store in TestResult
 ! Rename 'TestResultClass' to TestReturnCode
 ! Circular dependencies ('cdepends' from unit-test of testrunner)
-- Refactor the way modules and cases are handled, look at 'testrunner.cpp' from the original testrunner project
+! Refactor the way modules and cases are handled, look at 'testrunner.cpp' from the original testrunner project
+- Update Pre/Post callbacks to V2 (i.e. returning int's).
+- Add support for cmd-line specification of test/module using pattern matching
 </pre>
