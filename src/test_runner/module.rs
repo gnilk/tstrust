@@ -48,7 +48,7 @@ impl Module {
     }
 
     // Execute all functions in a module (incl. main/exit)
-    pub fn execute(&mut self, dynlib : &DynLibrary) {
+    pub fn execute(&mut self, dynlib : &DynLibraryRef) {
         // Execute main first, main can define various dependens plus pre/post functions
         self.execute_main(dynlib);
 
@@ -63,7 +63,7 @@ impl Module {
         self.execute_exit(dynlib);
     }
 
-    fn execute_main(&mut self, dynlib : &DynLibrary) {
+    fn execute_main(&mut self, dynlib : &DynLibraryRef) {
         if !self.main_func.is_some() {
             return;
         }
@@ -72,7 +72,7 @@ impl Module {
         func.borrow_mut().execute(self, dynlib);
 
         // Grab hold of the context and verify test-cases...
-        let ctx = CONTEXT.take();
+        let mut ctx = CONTEXT.lock().unwrap();
 
         self.pre_case_func = ctx.pre_case_handler;
         self.post_case_func = ctx.post_case_handler;
@@ -82,6 +82,10 @@ impl Module {
             return;
         }
 
+        // move dependencies over to their correct test-case
+        // note: the dependency list contains a case and a list of dependencies for that case..
+        //       thus we must have two loops..  one for the 'cases' and one for the dependencies..
+        //       plus this also checks if they are valid (if let...)
         for casedep in &ctx.dependencies {
             if let Some(tc) = self.get_test_case(casedep.case.as_str()).ok() {
                 for dep in &casedep.dependencies {
@@ -93,28 +97,25 @@ impl Module {
         }
     }
 
-    fn execute_exit(&mut self, dynlib : &DynLibrary) {
+    fn execute_exit(&mut self, dynlib : &DynLibraryRef) {
         if !self.exit_func.is_some() {
             return;
         }
 
         let func = self.exit_func.as_ref().unwrap();
         func.borrow_mut().execute(self, dynlib);
-
-        // Grab hold of the context and verify test-cases...
-        CONTEXT.take();
     }
 
-    fn execute_test(&self, tc : &TestFunctionRef, dynlib : &DynLibrary) {
+    fn execute_test(&self, tc : &TestFunctionRef, dynlib : &DynLibraryRef) {
         if self.pre_case_func.is_some() {
-            let mut trun_interface = tc.borrow().get_truninterface_ptr(); //TestRunnerInterface::new();
+            let mut trun_interface = get_truninterface_ptr(); //TestRunnerInterface::new();
             self.pre_case_func.as_ref().unwrap()(&mut trun_interface);
         }
 
         tc.borrow_mut().execute(self, dynlib);
 
         if self.post_case_func.is_some() {
-            let mut trun_interface = tc.borrow().get_truninterface_ptr(); //TestRunnerInterface::new();
+            let mut trun_interface = get_truninterface_ptr(); //TestRunnerInterface::new();
             self.post_case_func.as_ref().unwrap()(&mut trun_interface);
         }
     }

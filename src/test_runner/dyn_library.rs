@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::ffi::CString;
 use std::process::Command;
+use std::rc::Rc;
 use libloading::{Symbol};
 use crate::test_runner::TestableFunction;
 
@@ -9,6 +11,9 @@ pub struct DynLibrary {
     pub exports : Vec<String>,
     pub library : libloading::Library,
 }
+
+pub type DynLibraryRef = Rc<RefCell<DynLibrary>>;
+
 
 impl DynLibrary {
     // Should return result...

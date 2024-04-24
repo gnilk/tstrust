@@ -1,6 +1,7 @@
 use crate::test_runner::{AssertClass, AssertError, PrePostCaseHandler};
 
 pub struct Context {
+    pub raw_result : i32,
     pub dependencies : Vec<CaseDependency>,
     pub assert_error : Option<AssertError>,
     pub pre_case_handler : Option<PrePostCaseHandler>,
@@ -14,6 +15,7 @@ pub struct CaseDependency {
 impl Default for Context {
     fn default() -> Self {
         Self {
+            raw_result : 0,
             dependencies : Vec::new(),
             assert_error : None,
             pre_case_handler : None,
@@ -24,6 +26,18 @@ impl Default for Context {
 impl Context {
     pub fn new() -> Context {
         Self {
+            raw_result : 0,
+            dependencies : Vec::new(),
+            assert_error : None,
+            pre_case_handler : None,
+            post_case_handler : None,
+        }
+    }
+
+    // FIXME: check if possible to use 'default' instead..
+    pub fn reset(&mut self) -> Context {
+        Self {
+            raw_result : 0,
             dependencies : Vec::new(),
             assert_error : None,
             pre_case_handler : None,

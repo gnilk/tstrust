@@ -1,11 +1,14 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::collections::{HashMap};
-use crate::test_runner::{Config, Singleton, DynLibrary, Module, TestFunction, TestFunctionRef, TestScope, TestType, ResultSummary};
+use crate::test_runner::{Config, Singleton, DynLibrary, Module, TestFunction, TestFunctionRef, TestScope, TestType, ResultSummary, DynLibraryRef};
 
 //
 // The runner holds all test details for a single library..
 //
 pub struct TestRunner {
-    library : DynLibrary,
+    //library : DynLibrary,
+    library : DynLibraryRef,
     modules : HashMap<String, Module>,
     global_main : Option<TestFunctionRef>,
     global_exit : Option<TestFunctionRef>,
@@ -18,7 +21,7 @@ impl TestRunner {
     // filename should be a shared library
     pub fn new(filename : &str) -> TestRunner {
         let mut inst = TestRunner {
-            library : DynLibrary::new(filename),
+            library : Rc::new(RefCell::new(DynLibrary::new(filename))),
             modules : HashMap::new(),
             global_main : None,
             global_exit : None,
@@ -35,7 +38,7 @@ impl TestRunner {
     //
     fn prescan(&mut self) {
 
-        for x in &self.library.exports {
+        for x in &self.library.borrow_mut().exports {
             let res = Self::create_test_function(x);
             if res.is_err() {
                 continue;
@@ -182,7 +185,7 @@ impl TestRunner {
     //
     pub fn execute_tests(&mut self) {
 
-        println!("---> Start Library  \t{}", self.library.name);
+        println!("---> Start Library  \t{}", self.library.borrow().name);
 
         self.execute_library_main();
         self.execute_all_modules();
@@ -191,7 +194,7 @@ impl TestRunner {
         // Merge results
         self.test_results.push(self.global_results.clone());
 
-        println!("<--- Start Library  \t{}", self.library.name);
+        println!("<--- Start Library  \t{}", self.library.borrow().name);
     }
 
     //
@@ -231,6 +234,7 @@ impl TestRunner {
             }
             // HOW SHOULD THIS LINE WORK!!!
             //self.execute_module_tests(module);
+            let dynlibref = Rc::new(RefCell::new(&self.library));
             module.execute(&self.library);
 
             // Gather and append results...

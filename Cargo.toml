@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"] }
+libc = "0.2.153"
 #sharedlib="7.0.0"
 libloading = "0.8.3"
 log = "0.4.21"
+once_cell = "1.19.0"

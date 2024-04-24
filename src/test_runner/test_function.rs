@@ -1,7 +1,13 @@
 use std::cell::RefCell;
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{c_char, c_int, c_void, CStr};
+use std::ops::Deref;
+use std::ptr;
 use std::rc::Rc;
+use std::sync::Mutex;
 use std::time::{Instant};
+use libc::pthread_exit;
+use libloading::Symbol;
+use once_cell::sync::Lazy;
 use crate::test_runner::*;
 
 // Testable function
@@ -39,13 +45,47 @@ pub struct TestFunction {
 }
 pub type TestFunctionRef = Rc<RefCell<TestFunction>>;
 
+struct ThreadArg {
+    symbol : String,
+    dynlib : DynLibraryRef,
+}
+
+impl ThreadArg {
+    pub fn new(dynlib : &DynLibraryRef) -> ThreadArg {
+        Self {
+            symbol : String::new(),
+            dynlib : dynlib.clone(),
+        }
+    }
+}
 
 //
 // The context is a global variable which is set fresh for each execution
 // It contains the everything happening during a single test-function execution...
 //
-thread_local! {
-    pub static CONTEXT: RefCell<Context> = RefCell::new(Context::new());
+//pub static CONTEXT: RefCell<Context> = RefCell::new(Context::new());
+pub static CONTEXT: Lazy<Mutex<Context>> = Lazy::new(|| {
+    let mut ctx = Context::new();
+    Mutex::new(ctx)
+});
+
+
+extern "C" fn set_pre_case_handler(case_handler: PrePostCaseHandler) {
+    CONTEXT.lock().unwrap().pre_case_handler = Some(case_handler);
+    //CONTEXT.with(|ctx| ctx.borrow_mut().pre_case_handler = Some(case_handler));
+}
+extern "C" fn set_post_case_handler(case_handler: PrePostCaseHandler) {
+    CONTEXT.lock().unwrap().post_case_handler = Some(case_handler);
+    //CONTEXT.with(|ctx| ctx.borrow_mut().post_case_handler = Some(case_handler));
+}
+
+extern "C" fn dependency_handler(name : *const c_char, dep_list: *const c_char) {
+    // This needs access to a global variable!!
+
+    let str_name = unsafe { CStr::from_ptr(name).to_str().expect("assert error impl, exp error") };
+    let str_deplist = unsafe { CStr::from_ptr(dep_list).to_str().expect("assert error impl, file error") };
+
+    CONTEXT.lock().unwrap().add_dependency(str_name, str_deplist);
 }
 
 // FIXME: when rust support c-variadic's
@@ -56,21 +96,10 @@ extern "C" fn fatal_handler(line : c_int, file: *const c_char, format: *const c_
     let str_file = unsafe { CStr::from_ptr(file).to_str().expect("assert error impl, file error") };
 
     println!("Fatal Error: {}:{}\t'{}'", str_file, line, str_exp);
-}
-extern "C" fn set_pre_case_handler(case_handler: PrePostCaseHandler) {
-    CONTEXT.with(|ctx| ctx.borrow_mut().pre_case_handler = Some(case_handler));
-}
-extern "C" fn set_post_case_handler(case_handler: PrePostCaseHandler) {
-    CONTEXT.with(|ctx| ctx.borrow_mut().post_case_handler = Some(case_handler));
-}
 
-extern "C" fn dependency_handler(name : *const c_char, dep_list: *const c_char) {
-    // This needs access to a global variable!!
-
-    let str_name = unsafe { CStr::from_ptr(name).to_str().expect("assert error impl, exp error") };
-    let str_deplist = unsafe { CStr::from_ptr(dep_list).to_str().expect("assert error impl, file error") };
-
-    CONTEXT.with(|ctx| ctx.borrow_mut().add_dependency(str_name, str_deplist));
+    unsafe {
+        pthread_exit(ptr::null_mut());
+    }
 }
 
 extern "C" fn assert_error_handler(exp : *const c_char, file : *const c_char, line : c_int) {
@@ -83,7 +112,48 @@ extern "C" fn assert_error_handler(exp : *const c_char, file : *const c_char, li
 
     let assert_error = AssertError::new(str_file, line as u32, str_exp);
     assert_error.print();
-    CONTEXT.with_borrow_mut(|ctx| ctx.assert_error = Some(assert_error));
+    CONTEXT.lock().unwrap().assert_error = Some(assert_error);
+
+    unsafe {
+        pthread_exit(ptr::null_mut());
+    }
+
+}
+
+pub fn get_truninterface_ptr() -> TestRunnerInterface {
+    let mut trun_interface = TestRunnerInterface::new();
+    trun_interface.fatal = Some(fatal_handler);
+    trun_interface.case_depends = Some(dependency_handler);
+    trun_interface.assert_error = Some(assert_error_handler);
+    trun_interface.set_pre_case_callback = Some(set_pre_case_handler);
+    trun_interface.set_post_case_callback = Some(set_post_case_handler);
+
+    return trun_interface;
+}
+
+extern "C" fn pthread_execute_async(ptr_arg: *mut c_void) -> *mut c_void {
+    let thread_arg : &mut ThreadArg = unsafe { &mut *(ptr_arg as *mut ThreadArg)};
+
+    // do this on a two liner - otherwise the borrow checker will terminate at the end of the statement
+    // and since we take out a function from the dynlib, we need that later..
+    // ergo, first borrow the dynlib (allows borrow for dynlib to end of function)
+    // then we take the test-function out of it..
+    let dynlib = thread_arg.dynlib.as_ref().borrow();
+    let func : Symbol<TestableFunction> = dynlib.get_testable_function(&thread_arg.symbol);
+
+    // Fetch a callback interface instance, treat as a pointer and off we go...
+    let mut trun_interface = get_truninterface_ptr(); //TestRunnerInterface::new();
+    let raw_result = unsafe {
+        func(&mut trun_interface)
+    };
+
+    // Set the raw result - if any...
+    // note: in case of errors, the thread is terminated, the result handling will first check if we
+    //       have any errors before checking the resulting test-code..
+    let mut ctx = CONTEXT.lock().unwrap();
+    ctx.raw_result = raw_result;
+
+    return std::ptr::null_mut();
 }
 
 impl TestFunction {
@@ -170,121 +240,86 @@ impl TestFunction {
         return self.is_global() && (self.case_name == Config::instance().exit_func_name);
     }
 
-    pub fn execute_no_module(&mut self, dynlib : &DynLibrary) {
+    pub fn execute_no_module(&mut self, library : &DynLibraryRef) {
         match self.state {
             State::Idle => (),
             _ => return,
         }
-        self.change_state(State::Executing);
 
-        // Spawn thread here, need to figure out what happens with the Context (since it is a thread-local) variable
-        println!("=== RUN \t{}",self.symbol);
-
-        // Start the timer - do NOT include 'dependencies' in the timing - they are just a way of controlling execution
-        let t_start = Instant::now();
-
-        // Create the test runner interface...
-        let mut trun_interface = self.get_truninterface_ptr(); //TestRunnerInterface::new();
-
-        // And the context..
-        CONTEXT.set(Context::new());
-
-        // Look up the symbol and exeecute
-        //let lib = dynlib.borrow();
-        let func = dynlib.get_testable_function(&self.symbol);
-        let raw_result = unsafe { func(&mut trun_interface) };
-
-        // Stop timer
-        self.test_result.exec_duration = t_start.elapsed();
-
-        // Create test result, note: DO NOT take the Context here - we do this in the module later on!
-        // mainly because some 'setters' are module-level setters while some getters are module level getters...
-        CONTEXT.with_borrow_mut(|ctx| self.handle_result_from_ctx(ctx));
-        self.handle_test_return(raw_result);
-        self.test_result.symbol = self.symbol.clone();
-
-        self.test_result.print();
-        self.change_state(State::Finished);
+        // just create a dummy module - everything is None here - doesn't cost much...
+        let module = Module::new("dummy");
+        self.execute(&module, library);
     }
 
-    pub fn get_truninterface_ptr(&self) -> TestRunnerInterface {
-        let mut trun_interface = TestRunnerInterface::new();
-        trun_interface.fatal = Some(fatal_handler);
-        trun_interface.case_depends = Some(dependency_handler);
-        trun_interface.assert_error = Some(assert_error_handler);
-        trun_interface.set_pre_case_callback = Some(set_pre_case_handler);
-        trun_interface.set_post_case_callback = Some(set_post_case_handler);
 
-        return trun_interface;
-    }
 
 
     // FIXME: Should return result<>
-    pub fn execute(&mut self, module : &Module, dynlib : &DynLibrary) {
+    // Need to simplify this...
+    pub fn execute(&mut self, module : &Module, library : &DynLibraryRef) {
         match self.state {
             State::Idle => (),
             _ => return,
         }
 
         self.change_state(State::Executing);
-        self.execute_dependencies(module, dynlib);
+        self.execute_dependencies(module, library);
 
         // Spawn thread here, need to figure out what happens with the Context (since it is a thread-local) variable
         println!("=== RUN \t{}",self.symbol);
 
-        // Start the timer - do NOT include 'dependencies' in the timing - they are just a way of controlling execution
+        // Start the timer - we do NOT include 'dependencies' in the timing - they are just a way of controlling execution
         let t_start = Instant::now();
 
 
-        // FIXME: Threading - I need to define a struct which holds all data going back and forth to the thread
-        //        1) trun_interface (I can move the whole creation to this struct)
-        //        2) Symbol<TestableFunction>, need to grab this from dynlibrary
-        //        3) 'Context'  -> needs to be set to thread_local!  - (do this first, and see if it works - there are probably better ways!)
-        //        4)  pre/post_case_func might also be a good idea - as these can do stuff..
-        //
-        // Once done we need to figure out a way to terminate the thread...
-        //
-
-
-        // Create the test runner interface...
-        let mut trun_interface = self.get_truninterface_ptr(); //TestRunnerInterface::new();
-
-        // And the context..
-        CONTEXT.set(Context::new());
+        // Reset the context, this must be done before the pre/post cases are executed, they all use the context to communicate!
+        let mut ctx = CONTEXT.lock().unwrap();
+        ctx.reset();
+        drop(ctx);
 
 
         // Note: We do this here - as we align to the existing C/C++ test runner
         //       otherwise we could simply run in the module it-self (which might have been more prudent)
         // Execute pre case handler - if any has been assigned
         if module.pre_case_func.is_some() {
+            // FIXME: V2 have 'int' as return codes for the pre/post cases
+            let mut trun_interface = get_truninterface_ptr(); //TestRunnerInterface::new();
             module.pre_case_func.as_ref().unwrap()(&mut trun_interface);
         }
 
-        // Look up the symbol and exeecute
-        //let lib = dynlib.borrow();
-        let func = dynlib.get_testable_function(&self.symbol);
-        let raw_result = unsafe { func(&mut trun_interface) };
+        // Set up the thread argument..
+        let mut thread_arg = ThreadArg::new(library);
+        thread_arg.symbol = self.symbol.clone();
+
+        // Spawn execution thread
+        let mut mthread = PThread::<ThreadArg>::new(thread_arg);
+        // FIXME: better error handling, this will just panic if something goes wrong...
+        mthread.spawn(pthread_execute_async).ok();
+        mthread.join().ok();
 
         // Execute post case handler - if any...
         if module.post_case_func.is_some() {
+            let mut trun_interface = get_truninterface_ptr(); //TestRunnerInterface::new();
             module.post_case_func.as_ref().unwrap()(&mut trun_interface);
         }
 
         // Stop timer
         self.test_result.exec_duration = t_start.elapsed();
 
-        // Create test result, note: DO NOT take the Context here - we do this in the module later on!
-        // mainly because some 'setters' are module-level setters while some getters are module level getters...
-        CONTEXT.with_borrow_mut(|ctx| self.handle_result_from_ctx(ctx));
-        self.handle_test_return(raw_result);
+        // Create test result
+        let mut ctx = CONTEXT.lock().unwrap();
+        self.test_result.assert_error = ctx.assert_error.take();
+
+
+        self.handle_test_return(ctx.raw_result);
         self.test_result.symbol = self.symbol.clone();
 
         self.test_result.print();
-
         self.change_state(State::Finished);
     }
 
-    fn execute_dependencies(&mut self, module : &Module, dynlib : &DynLibrary) {
+
+    fn execute_dependencies(&mut self, module : &Module, dynlib : &DynLibraryRef) {
         for func in &self.dependencies {
             if func.try_borrow().is_err() {
                 // circular dependency - we are probably already executing this - as we have a borrow on it while executing..
